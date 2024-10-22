@@ -2,10 +2,9 @@ import pandas as pd
 import numpy as np
 from multiprocessing import Pool
 
-import argparse
-from cobra.core import model
+from cobra.core import Model
 
-from mteapy.utils import safe_eval_gpr, calculate_pvalue, MTEA_parallel_worker 
+from mteapy.utils import map_gpr, calculate_pvalue, MTEA_parallel_worker 
 
 
 ###########################################
@@ -180,7 +179,7 @@ def calculate_TIDE_scores(
     scores: numpy.ndarray
         An array of metabolic scores in the same order as the columns of the task structure object.
     """
-    rxn_projection = {rxn: safe_eval_gpr(gpr_dict[rxn], gene_dict, or_func) for rxn in task_structure.index}
+    rxn_projection = {rxn: map_gpr(gpr_dict[rxn], gene_dict, or_func) for rxn in task_structure.index}
     task_to_rxns = {task: task_structure.index[task_structure[task]].to_list() for task in task_structure.columns}
     
     scores = [np.mean([rxn_projection[rxn] for rxn in task_to_rxns[task]]) for task in task_to_rxns]
@@ -233,7 +232,7 @@ def calculate_random_TIDE_scores(
         for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
-            random_projection[i,:] = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
+            random_projection[i,:] = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
                                       for rxn in task_structure.index]
 
     else:
@@ -262,7 +261,7 @@ def compute_TIDE(
         expr_data:pd.DataFrame, 
         lfc_col:str,
         task_structure:pd.DataFrame, 
-        model:model, 
+        model:Model, 
         or_func:str,
         n_permutations:int = 1000,
         n_jobs:int = 1,
@@ -282,7 +281,7 @@ def compute_TIDE(
     task_structure: pandas.DataFrame
         A boolean matrix where rows are reactions and columns metabolic tasks. Each cell contains ones or zeros, indicating whether a reaction is involved in a metabolic task.
     
-    model: cobra.core.model
+    model: cobra.core.Model
         A COBRA metabolic model.
     
     or_func: str ["absmax" | "max"]
