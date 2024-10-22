@@ -1,0 +1,22 @@
+ID	DESCRIPTION	SYSTEM	SUBSYSTEM
+S1	Co-translational translocation	Translocation	Translocation
+S2	Post-translational translocation	Translocation	Translocation
+S3	GPI-anchor	Processing in the ER	PTMs
+S4	N-linked glycosylation	Processing in the ER	PTMs
+S5	Disulfide bond formation	Processing in the ER	PTMs
+S6	N-glycan processing (ER)	Processing in the ER	Protein folding
+S7	Calnexin/calreticulin cycle	Processing in the ER	Protein folding
+S8	Recognition of misfolded protein	Proteostasis	ERAD
+S9	Retro-translocation & substrate ubiquitination	Proteostasis	ERAD
+S10	Proteasomal degradation	Proteostasis	ERAD
+S11	Branching (N-acetylglucosaminyltransferases)	Processing in the Golgi	N-glycan processing (Golgi)
+S12	Fucosylation (addition of fucose)	Processing in the Golgi	N-glycan processing (Golgi)
+S13	Galactosylation (addition of galactose)	Processing in the Golgi	N-glycan processing (Golgi)
+S14	Sialylation (addition of sialic acid)	Processing in the Golgi	N-glycan processing (Golgi)
+S15	Mannose trimming (mannosidase)	Processing in the Golgi	N-glycan processing (Golgi)
+S16	O-linked glycosylation	Processing in the Golgi	O-glycan processing (Golgi)
+S17	Trafficking to endosomes (Clathrin Vesicles)	Vesicle trafficking	Endosomal trafficking
+S18	COPI mediated retrograde transport	Vesicle trafficking	Golgi to ER trafficking (COPI)
+S19	COPII-LMAN1 mediated anterograde transport	Vesicle trafficking	ER to Golgi trafficking (COPII)
+S20	COPII-LMAN2 mediated anterograde transport	Vesicle trafficking	ER to Golgi trafficking (COPII)
+S21	Vesicle secretion	Vesicle trafficking	Vesicle secretion

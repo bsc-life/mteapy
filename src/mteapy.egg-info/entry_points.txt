@@ -1,0 +1,2 @@
+[console_scripts]
+run-mtea = mteapy.cmds.run_mtea:main
