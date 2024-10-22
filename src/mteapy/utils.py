@@ -11,7 +11,6 @@ from cobra.core.gene import GPR
 # Generic functions
 ###########################################
 
-
 def mask_lfc_values(expr_df:pd.DataFrame, lfc_col:str, pvalue_col:str, alpha:float):
     """
     Function that "masks" non-significant log-FC values to 0.
@@ -43,32 +42,24 @@ def mask_lfc_values(expr_df:pd.DataFrame, lfc_col:str, pvalue_col:str, alpha:flo
 
 
 
-def absolute_minmax(array:np.ndarray, func:str):
+def absmax(array:np.ndarray):
     """
-    Function to return the index of the maximum or minimum absolute value of an array.
+    Function to return the index of the maximum absolute value of an array.
 
     Parameters
     ----------
     array: list | numpy.ndarray
         Array from which to compute the absolute maximum or minimum.
     
-    func: str ["absmax" | "absmin"]
-        Wheter to compute the absolute maximum or the minimum.
-    
     Returns
     -------
     value: float
-        The absolute maximum or minimum.
+        The absolute maximum of the array.
     """
     abs_array = np.abs(array)
-    
-    if func == "absmax":
-        max_idx = np.argmax(abs_array)
-        return array[max_idx]
-    
-    elif func == "absmin":
-        min_idx = np.argmin(abs_array)
-        return array[min_idx]
+    max_idx = np.argmax(abs_array)
+    return array[max_idx]
+
     
 
 def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
@@ -104,7 +95,7 @@ def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
             if or_func == "max":
                 return max([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values])
             elif or_func == "absmax":
-                return absolute_minmax([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values], func="absmax")
+                return absmax([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values])
         elif isinstance(op, And):
             return min([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values])
         else:
@@ -117,6 +108,38 @@ def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
     else:
         raise TypeError("unsupported operation " + repr(expr))
     
+
+def safe_eval_gpr_w_names(expr:GPR, conf_genes:dict):
+    """
+    Internal function to evaluate a gene-protein rule in an injection-safe manner (hopefully).
+    """
+    if isinstance(expr, (Expression, GPR)):
+        return safe_eval_gpr_w_names(expr.body, conf_genes)
+    
+    elif isinstance(expr, Name):
+        fgid = re.sub(r"\.\d*", "", expr.id)      # Removes "." notation from genes
+        return conf_genes.get(fgid, 0), fgid
+    
+    elif isinstance(expr, BoolOp):
+        op = expr.op
+        evaluated_values = [safe_eval_gpr_w_names(i, conf_genes) for i in expr.values]
+        filtered_values = [(value, gene) for value, gene in evaluated_values if gene in conf_genes]
+        # Return default values if no valid genes found
+        if len(filtered_values) == 0:
+            return 0, "0" 
+        if isinstance(op, Or):
+            return max(filtered_values, key=lambda x: x[0])
+        elif isinstance(op, And):
+            return min(filtered_values, key=lambda x: x[0])
+        else:
+            raise TypeError("unsupported operation " + op.__class__.__name__)
+    
+    elif expr is None:
+        return 0, "0"
+    
+    else:
+        raise TypeError("unsupported operation " + repr(expr))
+
 
 def calculate_pvalue(score:float, random_scores:np.ndarray, n_permutations:int):
     """
