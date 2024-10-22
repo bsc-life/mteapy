@@ -68,7 +68,7 @@ def main() -> None:
         
         # Reading in data and gene essentiality
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
-        gene_essentiality = pd.read_csv(os.path.join(curdir, "../../data/Human-GEM_essential_genes_matrix.tsv"),\
+        gene_essentiality = pd.read_csv(os.path.join(curdir, "../../data/HumanGEM_essential_genes_matrix.tsv"),\
                                         delimiter="\t", index_col=0)
 
         # Column names check
@@ -137,12 +137,12 @@ def main() -> None:
         
         print("Loading metabolic model", end=" ")
         if args.secretory_flag:
-            model = read_sbml_model(os.path.join(curdir, "../../data/Human-GEM_secretory.xml.gz"))
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
             task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
                                              sep="\t", index_col=0)
             task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
         else:
-            model = read_sbml_model(os.path.join(curdir, "../../data/Human-GEM.xml.gz"))
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         print("- OK.")
                 
         # Column names check
@@ -208,12 +208,12 @@ def main() -> None:
         
         print("Loading metabolic model", end=" ")
         if args.secretory_flag:
-            model = read_sbml_model(os.path.join(curdir, "../../data/Human-GEM_secretory.xml.gz"))
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
             task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
                                              sep="\t", index_col=0)
             task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
         else:
-            model = read_sbml_model(os.path.join(curdir, "../../data/Human-GEM.xml.gz"))
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         print("- OK.")
         
         # Column names check

@@ -146,7 +146,7 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
         np.random.shuffle(lfc_vector)
         random_gene_dict = dict(zip(genes, lfc_vector))
         
-        random_scores = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, args) \
+        random_scores = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, args.or_func) \
                         for rxn in task_structure.index]
         
         return np.array(random_scores)
@@ -178,7 +178,7 @@ def calculate_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame):
 
     scores = [np.mean([gene_dict.get(gene, 0.0) for gene in task_to_gene[task]]) for task in task_to_gene]
 
-    return scores
+    return np.array(scores)
 
 
 def calculate_random_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame, args):
@@ -296,7 +296,7 @@ def calculate_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gpr_dict:
     scores: numpy.ndarray
         An array of metabolic scores in the same order as the columns of the task structure object.
     """
-    rxn_projection = {rxn: safe_eval_gpr(gpr_dict[rxn], gene_dict, args) for rxn in task_structure.index}
+    rxn_projection = {rxn: safe_eval_gpr(gpr_dict[rxn], gene_dict, args.or_func) for rxn in task_structure.index}
     task_to_rxns = {task: task_structure.index[task_structure[task]].to_list() for task in task_structure.columns}
     
     scores = [np.mean([rxn_projection[rxn] for rxn in task_to_rxns[task]]) for task in task_to_rxns]
@@ -336,7 +336,7 @@ def calculate_random_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gp
         for i in range(args.n_permutations):
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
-            random_projection[i,:] = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, args) \
+            random_projection[i,:] = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, args.or_func) \
                                       for rxn in task_structure.index]
 
     else:
@@ -449,7 +449,6 @@ def calculate_GAL(expr_data:pd.DataFrame, thresh_type:str, local_thresh_type:str
     Notes
     -----
     GALs and thresholds are computed as indicated in the CellFie paper.
-    
     """
     # Transform into numpy and pre-allocate array for results
     expr_data_array = expr_data.to_numpy()
