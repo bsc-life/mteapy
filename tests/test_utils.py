@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 from cobra.core.gene import GPR
-from mteapy.utils import mask_lfc_values, absolute_minmax, safe_eval_gpr, calculate_pvalue
+from mteapy.utils import mask_lfc_values, absmax, safe_eval_gpr, calculate_pvalue
 
 
 def test_mask_lfc_values():
@@ -19,7 +19,7 @@ def test_mask_lfc_values():
     (np.array([0.1, 1.3, -1]), 1.3)
 ])
 def test_absolute_minmax(input, expected):
-    assert absolute_minmax(input, func="absmax") == expected
+    assert absmax(input) == expected
 
 
 @pytest.mark.parametrize("input,expected", [
