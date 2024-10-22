@@ -1,3 +1,5 @@
+notebooks/
+
 .pytest_cache
 tests/__pycache__
 src/mteapy/__pycache__

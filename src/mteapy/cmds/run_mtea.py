@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-import os
-from time import time
 
+import os
 import pandas as pd
+from time import time
 from cobra.io import read_sbml_model
 
-from mteapy.colors import bcolors
-from mteapy.utils import compute_TIDEe, compute_TIDE, compute_CellFie
 from mteapy.parser import mtea_parser
+from mteapy.colors import bcolors
+
+from mteapy.utils import mask_lfc_values
+from mteapy.tide import compute_TIDEe, compute_TIDE
+from mteapy.cellfie import compute_CellFie
 
 
 def main() -> None:
@@ -21,7 +24,6 @@ def main() -> None:
     args = parser.parse_args()
     start = time()
     print()
-
     
     if args.citation_flag:
         print(f"{bcolors.OKBLUE}Cite TIDE:{bcolors.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
@@ -47,7 +49,7 @@ def main() -> None:
     
     if args.command == "TIDE-essential":
         
-        print("Performing Tasks Inferred from Differential Expression (TIDE) using  essential genes.")
+        print("Starting Tasks Inferred from Differential Expression (TIDE) analysis using  essential genes.")
         
         # File and dir status check
         if not os.path.isfile(args.dea_file):
@@ -89,8 +91,7 @@ def main() -> None:
                 exit(1)
             
             print(f"LFC values will be masked using their p-values (alpha = {args.alpha})", end = " ")   
-            expr_data_df[args.pvalue_col] = expr_data_df[args.pvalue_col].fillna(1)
-            expr_data_df.loc[expr_data_df[args.pvalue_col] >= args.alpha, args.lfc_col] = 0
+            expr_data_df = mask_lfc_values(expr_data_df, args.lfc_col, args.pvalue_col, args.alpha)
             print("- OK")
             
         # Main execution
@@ -110,7 +111,7 @@ def main() -> None:
     
     elif args.command == "TIDE":
         
-        print("Performing Tasks Inferred from Differential Expression (TIDE) analysis.")
+        print("Starting Tasks Inferred from Differential Expression (TIDE) analysis.")
 
         # File and dir status check
         if not os.path.isfile(args.dea_file):
@@ -130,7 +131,7 @@ def main() -> None:
             print(f"Results will be saved into {args.out_filename}.")
     
         # Reading in data, model and task structure
-        # TODO: allow user to input their own
+        # TODO: allow user to input their own metabolic model and task structures
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
         task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
@@ -163,8 +164,7 @@ def main() -> None:
                 exit(1)
             
             print(f"LFC values will be masked using their p-values (alpha = {args.alpha})", end = " ")   
-            expr_data_df[args.pvalue_col] = expr_data_df[args.pvalue_col].fillna(1)
-            expr_data_df.loc[expr_data_df[args.pvalue_col] >= args.alpha, args.lfc_col] = 0
+            expr_data_df = mask_lfc_values(expr_data_df, args.lfc_col, args.pvalue_col, args.alpha)
             print("- OK.")
 
         # Main execution
