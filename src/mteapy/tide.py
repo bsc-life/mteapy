@@ -37,7 +37,12 @@ def calculate_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame):
     return np.array(scores)
 
 
-def calculate_random_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame, args):
+def calculate_random_TIDEe_scores(
+        gene_dict:dict, 
+        gene_essentiality:pd.DataFrame, 
+        n_permutations:int = 1000,
+        n_jobs:int = 1
+    ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
 
@@ -49,8 +54,11 @@ def calculate_random_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame
     gene_essentiality: pandas.DataFrame
         A boolean matrix where rows are genes and columns metabolic tasks. Each cell contains ones or zeros, indicating whether a gene is essential for a metabolic task.
     
-    args: argparse.ArgumentParser
-        The arguments passed by the user through the command line.
+    n_permutations: int 
+        Number of permutations to inferr significancy (default: 1000).
+    
+    n_jobs: int 
+        Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
     Returns
     -------
@@ -62,9 +70,9 @@ def calculate_random_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame
     task_to_gene = {task: gene_essentiality.index[gene_essentiality[task]].to_list() \
                     for task in gene_essentiality.columns}
 
-    if args.n_jobs <= 1:
-        random_scores = np.zeros((args.n_permutations, len(gene_essentiality.columns)))
-        for i in range(args.n_permutations):
+    if n_jobs <= 1:
+        random_scores = np.zeros((n_permutations, len(gene_essentiality.columns)))
+        for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
             random_scores[i,:] = [np.mean([random_gene_dict.get(gene, 0.0) for gene in task_to_gene[task]]) \
@@ -72,44 +80,59 @@ def calculate_random_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame
             
     else:
         # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_to_gene, np.random.random_integers(0,1e6), args) \
-                     for _ in range(args.n_permutations)]
+        arguments = [(genes, lfc_vector, task_to_gene, np.random.random_integers(0,1e6), "TIDE-essential") \
+                     for _ in range(n_permutations)]
         
         # Parallel execution
-        with Pool(processes=args.n_jobs) as pool:
+        with Pool(processes=n_jobs) as pool:
             map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
             random_scores = np.array([array for array in map_result.get()])
             
     return pd.DataFrame(random_scores, columns=gene_essentiality.columns)
 
 
-def compute_TIDEe(expr_data:pd.DataFrame, gene_essentiality:pd.DataFrame, args):
+def compute_TIDEe(
+        expr_data:pd.DataFrame, 
+        lfc_col:str,
+        gene_essentiality:pd.DataFrame,
+        n_permutations:int = 1000,
+        n_jobs:int = 1,
+        random_scores_flag:bool = False
+    ):
     """
     Wrapper function to compute the TIDE-essential framework.
 
     Parameters
     ----------
     expr_data: pandas.DataFrame
-        A pandas DataFrame containing gene expression change values. Rows should correspond to the different genes, and columns should contain at least a gene column, an expression column, and a p-value column.
+        A pandas DataFrame containing gene expression change values. Row indices should correspond to the different genes, and columns should contain at least a gene column, an expression column, and a p-value column.
+
+    lfc_col: str
+        Column name in expr_data containing log-FC values.
     
     gene_essentiality: pandas.DataFrame
         A boolean matrix where rows are genes and columns metabolic tasks. Each cell contains ones or zeros, indicating whether a gene is essential for a metabolic task.
-    
-    args: argparse.ArgumentParser
-        The arguments passed by the user through the command line.
 
+    n_permutations: int 
+        Number of permutations to inferr significancy (default: 1000).
+    
+    n_jobs: int 
+        Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
+
+    random_scores_flag: bool
+        Flag to indicate whether to add to the results DataFrame the null distributions (default: False).
+    
     Returns
     -------
     TIDE_e_results: pandas.DataFrame
         A pandas DataFrame where rows are metabolic tasks and columns correspond to their metabolic score from TIDE-essential, their average random score calculated from the null distribution, and their p-value.
     """
-    expr_data.set_index(args.gene_col, inplace=True)
-    gene_dict = dict(zip(expr_data.index, expr_data[args.lfc_col]))
+    gene_dict = dict(zip(expr_data.index, expr_data[lfc_col]))
     gene_essentiality = gene_essentiality.astype(bool)
 
     scores = calculate_TIDEe_scores(gene_dict, gene_essentiality)
-    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, args)
-    pvalues =  [calculate_pvalue(scores[i], random_scores_df[task], args.n_permutations) \
+    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_jobs, n_permutations)
+    pvalues =  [calculate_pvalue(scores[i], random_scores_df[task], n_permutations) \
                 for i, task in enumerate(gene_essentiality.columns)]
     
     TIDE_e_results = pd.DataFrame({"task_id": gene_essentiality.columns,
@@ -118,7 +141,7 @@ def compute_TIDEe(expr_data:pd.DataFrame, gene_essentiality:pd.DataFrame, args):
                                    "pvalue": pvalues
                                     })
     
-    if args.random_scores_flag:
+    if random_scores_flag:
         TIDE_e_results["random_score_array"] = np.array([";".join(random_scores_df.T.loc[task].astype(str)) \
                                                        for task in TIDE_e_results["task_id"]])
     
@@ -129,7 +152,12 @@ def compute_TIDEe(expr_data:pd.DataFrame, gene_essentiality:pd.DataFrame, args):
 # TIDE functions
 ###########################################
 
-def calculate_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gpr_dict:dict, args:argparse.ArgumentParser):
+def calculate_TIDE_scores(
+        gene_dict:dict, 
+        task_structure:pd.DataFrame, 
+        gpr_dict:dict, 
+        or_func:str
+    ):
     """
     Function to calculate the metabolic score from TIDE.
 
@@ -144,15 +172,15 @@ def calculate_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gpr_dict:
     gpr_dict: dict
         A dictionary of reactions to their GPR rules. GPR rules must be cobra.core.gene.GPR or ast.Name or ast.BoolOp objects.
     
-    args: argparse.ArgumentParser
-        The arguments passed by the user through the command line.
+    or_func: str ["absmax" | "max"]
+        Function to evaluate OR rules within a GPR rule.
 
     Returns
     -------
     scores: numpy.ndarray
         An array of metabolic scores in the same order as the columns of the task structure object.
     """
-    rxn_projection = {rxn: safe_eval_gpr(gpr_dict[rxn], gene_dict, args.or_func) for rxn in task_structure.index}
+    rxn_projection = {rxn: safe_eval_gpr(gpr_dict[rxn], gene_dict, or_func) for rxn in task_structure.index}
     task_to_rxns = {task: task_structure.index[task_structure[task]].to_list() for task in task_structure.columns}
     
     scores = [np.mean([rxn_projection[rxn] for rxn in task_to_rxns[task]]) for task in task_to_rxns]
@@ -160,7 +188,14 @@ def calculate_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gpr_dict:
     return np.array(scores)
 
 
-def calculate_random_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gpr_dict:dict, args:argparse.ArgumentParser):
+def calculate_random_TIDE_scores(
+        gene_dict:dict, 
+        task_structure:pd.DataFrame, 
+        gpr_dict:dict, 
+        or_func:str,
+        n_permutations:int = 1000,
+        n_jobs:int = 1
+    ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
 
@@ -175,8 +210,14 @@ def calculate_random_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gp
     gpr_dict: dict
         A dictionary of reactions to their GPR rules. GPR rules must be cobra.core.gene.GPR or ast.Name or ast.BoolOp objects.
     
-    args: argparse.ArgumentParser
-        The arguments passed by the user through the command line.
+    or_func: str ["absmax" | "max"]
+        Function to evaluate OR rules within a GPR rule.
+
+    n_permutations: int 
+        Number of permutations to inferr significancy (default: 1000).
+    
+    n_jobs: int 
+        Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
     Returns
     -------
@@ -187,21 +228,21 @@ def calculate_random_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gp
     lfc_vector = np.array(list(gene_dict.values()))
 
     # Decide whether to parallellise
-    if args.n_jobs <= 1:
-        random_projection = np.zeros((args.n_permutations, len(task_structure.index)))
-        for i in range(args.n_permutations):
+    if n_jobs <= 1:
+        random_projection = np.zeros((n_permutations, len(task_structure.index)))
+        for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
-            random_projection[i,:] = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, args.or_func) \
+            random_projection[i,:] = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
                                       for rxn in task_structure.index]
 
     else:
         # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_structure, gpr_dict, np.random.random_integers(0,1e6), args) \
-                    for _ in range(args.n_permutations)]
+        arguments = [(genes, lfc_vector, task_structure, gpr_dict, np.random.random_integers(0,1e6), or_func, "TIDE") \
+                    for _ in range(n_permutations)]
         
         # Parallel execution
-        with Pool(processes=args.n_jobs) as pool:
+        with Pool(processes=n_jobs) as pool:
             map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
             random_projection = np.array([array for array in map_result.get()])
     
@@ -209,7 +250,7 @@ def calculate_random_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gp
 
     # Reduce from random reaction projections to random metabolic scores
     # (n_permutations * n_reactions) --> (n_permutations * n_tasks)
-    random_scores = np.zeros((args.n_permutations, len(task_structure.columns)))
+    random_scores = np.zeros((n_permutations, len(task_structure.columns)))
     for i, task in enumerate(task_structure.columns):
         rxns = [k for k in task_structure.index[task_structure[task]] if k in random_projection_df.index]
         random_scores[:,i] = random_projection_df.loc[rxns].mean().values
@@ -217,7 +258,16 @@ def calculate_random_TIDE_scores(gene_dict:dict, task_structure:pd.DataFrame, gp
     return pd.DataFrame(random_scores, columns=task_structure.columns)
 
 
-def compute_TIDE(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:model, args:argparse.ArgumentParser):
+def compute_TIDE(
+        expr_data:pd.DataFrame, 
+        lfc_col:str,
+        task_structure:pd.DataFrame, 
+        model:model, 
+        or_func:str,
+        n_permutations:int = 1000,
+        n_jobs:int = 1,
+        random_scores_flag:bool = False
+    ):
     """
     Wrapper function to compute the TIDE framework.
 
@@ -226,28 +276,43 @@ def compute_TIDE(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:mode
     expr_data: pandas.DataFrame
         A pandas DataFrame containing gene expression values. Rows should correspond to the different genes, and columns should contain at least a gene column, an expression column, and a p-value column.
     
+    lfc_col: str
+        Column name in expr_data containing log-FC values.
+    
     task_structure: pandas.DataFrame
         A boolean matrix where rows are reactions and columns metabolic tasks. Each cell contains ones or zeros, indicating whether a reaction is involved in a metabolic task.
     
     model: cobra.core.model
         A COBRA metabolic model.
     
-    args: argparse.ArgumentParser
-        The arguments passed by the user through the command line.
+    or_func: str ["absmax" | "max"]
+        Function to evaluate OR rules within a GPR rule.
+    
+    n_permutations: int 
+        Number of permutations to inferr significancy (default: 1000).
+    
+    n_jobs: int 
+        Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
     Returns
     -------
     TIDE_results: pandas.DataFrame
         A pandas DataFrame where rows are metabolic tasks and columns correspond to their score from TIDE, their average random score calculated from the null distribution, and their p-value.
     """
-    expr_data.set_index(args.gene_col, inplace=True)
-    gene_dict = dict(zip(expr_data.index, expr_data[args.lfc_col]))
+    gene_dict = dict(zip(expr_data.index, expr_data[lfc_col]))
     task_structure = task_structure.astype(bool)
     gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.id in task_structure.index}
 
-    scores = calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, args)
-    random_scores_df = calculate_random_TIDE_scores(gene_dict, task_structure, gpr_dict, args)
-    pvalues = [calculate_pvalue(scores[i], random_scores_df[task], args.n_permutations) \
+    scores = calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, or_func)
+    random_scores_df = calculate_random_TIDE_scores(
+        gene_dict, 
+        task_structure, 
+        gpr_dict, 
+        or_func, 
+        n_permutations, 
+        n_jobs
+    )
+    pvalues = [calculate_pvalue(scores[i], random_scores_df[task], n_permutations) \
                for i, task in enumerate(task_structure.columns)]
 
     TIDE_results = pd.DataFrame({"task_id": task_structure.columns,
@@ -256,7 +321,7 @@ def compute_TIDE(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:mode
                                  "pvalue": pvalues
                                 })
     
-    if args.random_scores_flag:
+    if random_scores_flag:
         TIDE_results["random_score_array"] = np.array([";".join(random_scores_df.T.loc[task].astype(str)) \
                                                        for task in TIDE_results["task_id"]])
 

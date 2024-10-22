@@ -156,10 +156,10 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
         An array of random metabolic scores in the same order as the columns of the task structure object.
     """
     # Extracting first last argument to know which framework has the user selected
-    args = arguments[-1]
+    framework = arguments[-1]
     
-    if args.command == "TIDE-essential":
-        genes, lfc_vector, task_to_gene, random_seed, args = arguments
+    if framework == "TIDE-essential":
+        genes, lfc_vector, task_to_gene, random_seed, framework = arguments
         np.random.seed(random_seed)
         np.random.shuffle(lfc_vector)
         random_gene_dict = dict(zip(genes, lfc_vector))
@@ -168,13 +168,13 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
         
         return np.array(random_scores)
     
-    elif args.command == "TIDE":
-        genes, lfc_vector, task_structure, gpr_dict, random_seed, args = arguments
+    elif framework == "TIDE":
+        genes, lfc_vector, task_structure, gpr_dict, random_seed, or_func, framework = arguments
         np.random.seed(random_seed)
         np.random.shuffle(lfc_vector)
         random_gene_dict = dict(zip(genes, lfc_vector))
         
-        random_scores = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, args.or_func) \
+        random_scores = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
                         for rxn in task_structure.index]
         
         return np.array(random_scores)

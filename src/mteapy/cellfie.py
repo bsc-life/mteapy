@@ -1,9 +1,9 @@
+import re
 import pandas as pd
 import numpy as np
 from cobra.core.gene import GPR
 from ast import Name, And, Or, BoolOp, Expression
 
-import argparse
 from cobra.core import model
 
 
@@ -11,7 +11,7 @@ from cobra.core import model
 # CellFie functions
 ###########################################
 
-def calculate_GAL(expr_data:pd.DataFrame, thresh_type:str, local_thresh_type:str, minmaxmean_thresh_type:str, upper_bound:float, lower_bound:float, global_thresh_type:str, global_value:float):
+def calculate_GAL(expr_data:pd.DataFrame, thresh_type:str = "local", local_thresh_type:str = "minmaxmean", minmaxmean_thresh_type:str = "percentile", upper_bound:float = 0.75, lower_bound:float = 0.25, global_thresh_type:str = None, global_value:float = None):
     """
     Function to calculate Gene Activity Levels (GALs) from a gene expression matrix using the CellFie framework. It calculates specific thresholds internally given the inputs from the user.
 
@@ -20,26 +20,26 @@ def calculate_GAL(expr_data:pd.DataFrame, thresh_type:str, local_thresh_type:str
     expr_data: pandas.DataFrame
         A pandas DataFrame containing gene expression values where rows are genes and columns are samples.
     
-    thresh_type: str ["local" | "global"]
+    thresh_type: str ["local" | "global"] (default: "local")
         Thresholding strategy to use, either locally using specific thresholds for each gene or globally using the same threshold for all genes.
     
-    local_thresh_type: str ["minmaxmean" | "mean"]
-        Local thresholding strategy to use. Minmaxmean uses the mean expression value and some upper and lower bounds to compute thresholds. Mean uses the mean of each gene as threshold.
+    local_thresh_type: str ["minmaxmean" | "mean"] 
+        Local thresholding strategy to use. Minmaxmean uses the mean expression value and some upper and lower bounds to compute thresholds. Mean uses the mean of each gene as threshold (default: "minmaxmean").
     
-    minmaxmean_thresh_type: str ["value" | "percentile"]
-        Type of upper and lower bounds to apply to the minmaxmean thresholding strategy.
+    minmaxmean_thresh_type: str ["value" | "percentile"] 
+        Type of upper and lower bounds to apply to the minmaxmean thresholding strategy (default: "percentile").
     
-    upper_bound: float
-        Upper bound for minmaxmean thresholding strategy. If using percentiles, value must be between 0 and 1.
+    upper_bound: float 
+        Upper bound for minmaxmean thresholding strategy. If using percentiles, value must be between 0 and 1 (default: 0.75).
     
-    lower_bound: float
-        Lower bound for minmaxmean thresholding strategy. If using percentiles, value must be between 0 and 1.
+    lower_bound: float 
+        Lower bound for minmaxmean thresholding strategy. If using percentiles, value must be between 0 and 1 (default: 0.25).
     
-    global_thresh_type: str ["value" | "percentile"]
-        Global thresholding strategy to use. Value will consider a global value as threshold for all genes, and percentile will consider a global percentile as threshold for all genes.
+    global_thresh_type: str ["value" | "percentile"] 
+        Global thresholding strategy to use. Value will consider a global value as threshold for all genes, and percentile will consider a global percentile as threshold for all genes (default: None).
     
-    global_value: float
-        Value to use for global thresholding strategy. If using percentile, value must be between 0 and 1.
+    global_value: float 
+        Value to use for global thresholding strategy. If using percentile, value must be between 0 and 1 (default: None).
 
     Returns
     -------
@@ -203,14 +203,14 @@ def calculate_CellFie_scores(ral_df:pd.DataFrame, task_structure:pd.DataFrame):
     return metabolic_scores_df, binary_scores_df
 
 
-def compute_CellFie(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:model, args:argparse.ArgumentParser):
+def compute_CellFie(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:model, thresh_type:str = "local", local_thresh_type:str = "minmaxmean", minmaxmean_thresh_type:str = "percentile", upper_bound:float = 0.75, lower_bound:float = 0.25, global_thresh_type:str = None, global_value:float = None):
     """
     Wrapper function to compute the CellFie framework.
 
     Parameters
     ----------
     expr_data: pandas.DataFrame
-        A pandas DataFrame containing gene expression values where rows are genes and columns are samples.
+        A pandas DataFrame containing gene expression values where rows are genes and columns are samples. Genes should be inputed as the index of the DataFrame.
 
     task_structure: pandas.DataFrame
         A boolean matrix where rows are reactions and columns metabolic tasks. Each cell contains ones or zeros, indicating whether a reaction is involved in a metabolic task.
@@ -218,8 +218,26 @@ def compute_CellFie(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:m
     model: cobra.core.model
         A COBRA metabolic model.
     
-    args: argparse.ArgumentParser
-        The arguments passed by the user through the command line.
+    thresh_type: str ["local" | "global"] (default: "local")
+        Thresholding strategy to use, either locally using specific thresholds for each gene or globally using the same threshold for all genes.
+    
+    local_thresh_type: str ["minmaxmean" | "mean"] 
+        Local thresholding strategy to use. Minmaxmean uses the mean expression value and some upper and lower bounds to compute thresholds. Mean uses the mean of each gene as threshold (default: "minmaxmean").
+    
+    minmaxmean_thresh_type: str ["value" | "percentile"] 
+        Type of upper and lower bounds to apply to the minmaxmean thresholding strategy (default: "percentile").
+    
+    upper_bound: float 
+        Upper bound for minmaxmean thresholding strategy. If using percentiles, value must be between 0 and 1 (default: 0.75).
+    
+    lower_bound: float 
+        Lower bound for minmaxmean thresholding strategy. If using percentiles, value must be between 0 and 1 (default: 0.25).
+    
+    global_thresh_type: str ["value" | "percentile"] 
+        Global thresholding strategy to use. Value will consider a global value as threshold for all genes, and percentile will consider a global percentile as threshold for all genes (default: None).
+    
+    global_value: float 
+        Value to use for global thresholding strategy. If using percentile, value must be between 0 and 1 (default: None).
     
     Returns
     -------
@@ -229,15 +247,19 @@ def compute_CellFie(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:m
     binary_scores_df: pandas.DataFrame
         A pandas DataFrame containing the binary metabolic scores after applying a certain threshold of activity. Rows correspond to metabolic tasks and columns to samples.
     """
-    # expr_data.set_index(args.gene_col, inplace=True)
     task_structure = task_structure.astype(bool)
 
     # CellFie only uses reactions with valid GPR rules, internally they are considered as 0.0
     gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.gpr != GPR.from_string("")}
 
-    gal_df = calculate_GAL(expr_data, args.thresh_type, args.local_thresh_type, args.minmaxmean_thresh_type,
-                        args.upper_bound, args.lower_bound, args.global_thresh_type, args.global_value)
-    
+    gal_df = calculate_GAL(
+        expr_data, 
+        thresh_type, 
+        local_thresh_type,
+        minmaxmean_thresh_type, 
+        upper_bound, lower_bound, 
+        global_thresh_type, global_value
+    )
     ral_df = calculate_RAL(gal_df, gpr_dict)
     metabolic_scores_df, binary_scores_df = calculate_CellFie_scores(ral_df, task_structure)
 
