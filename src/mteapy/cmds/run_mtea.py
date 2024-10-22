@@ -100,7 +100,14 @@ def main() -> None:
         print(f"\tPermutations = {args.n_permutations}")
 
         print("Saving results", end=" ")
-        TIDE_e_results = compute_TIDEe(expr_data_df, gene_essentiality, args)
+        TIDE_e_results = compute_TIDEe(
+            expr_data_df.set_index(args.gene_col), 
+            args.lfc_col,
+            gene_essentiality, 
+            args.n_permutations,
+            args.n_jobs,
+            args.random_scores_flag
+        )
         TIDE_e_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
         print("- OK.")
         
@@ -178,7 +185,16 @@ def main() -> None:
             print(f"\tModules      = metabolic")
         
         print("Saving results", end = " ")
-        TIDE_results = compute_TIDE(expr_data_df, task_structure, model, args)
+        TIDE_results = compute_TIDE(
+            expr_data_df.set_index(args.gene_col), 
+            args.lfc_col,
+            task_structure, 
+            model, 
+            args.or_func,
+            args.n_permutations,
+            args.n_jobs,
+            args.random_scores_flag
+        )
         TIDE_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
         print("- OK.")
         
@@ -251,7 +267,16 @@ def main() -> None:
             print(f"\tModules               = metabolic")
         
         # Main execution
-        metabolic_scores_df, binary_scores_df = compute_CellFie(expr_data_df, task_structure, model, args)
+        metabolic_scores_df, binary_scores_df = compute_CellFie(
+            expr_data_df, 
+            task_structure, 
+            model, 
+            args.thresh_type, 
+            args.local_thresh_type, 
+            args.minmaxmean_thresh_type, 
+            args.upper_bound, args.lower_bound, 
+            args.global_thresh_type, args.global_value
+        )
         
         # Saving results
         print(f"Saving results", end=" ")
