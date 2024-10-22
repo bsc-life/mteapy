@@ -10,7 +10,7 @@ authors = [
      {name = "Xavier Benedicto Molina", email = "xavier.benedicto@bsc.es"},
      {name = "Miguel Ponce de Leon", email = "miguel.ponce@bsc.es"}
 ]
-description = ""
+description = "Python library for Metabolic Task Enrichment Analysis"
 readme = "README"
 requires-python = ">=3.8"
 license = {text = "BSD 3-Clause License"}
@@ -35,8 +35,8 @@ run-mtea = "mteapy.cmds.run_mtea:main"
 
 
 [project.urls]
-"Homepage" = "https://github.com/bsc-life/csmemo"
-"Bug Tracker" = "https://github.com/bsc-life/csmemo/issues"
+"Homepage" = "https://github.com/bsc-life/mteapy"
+"Bug Tracker" = "https://github.com/bsc-life/mteapy/issues"
 
 
 [project.optional-dependencies]

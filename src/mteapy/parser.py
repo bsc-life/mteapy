@@ -116,7 +116,7 @@ def mtea_parser():
     
     CellFie_parser.add_argument("--global_threshold_type", action="store", type=str, dest="global_thresh_type", default="percentile", choices=["value","percentile"], help="option to determine whether to use a value or a percentile of the distribution of all genes as global treshold")
 
-    CellFie_parser.add_argument("--global_value", action="store", type=float, dest="global_value", help="value to use as global threshold according to the global_threshold_type option (percentile values must be between 0 and 1)")
+    CellFie_parser.add_argument("--global_value", action="store", type=float, dest="global_value", default=0.75, help="value to use as global threshold according to the global_threshold_type option (percentile values must be between 0 and 1)")
     
     CellFie_parser.add_argument("--local_threshold_type", action="store", type=str, dest="local_thresh_type", default="minmaxmean", choices=["minmaxmean","mean"], help="determines the threshold type to be used in a local approach ('minmaxmean': the threshold for each gene is determined by the mean of expression values across all conditions/samples BUT must be higher or equal than a lower bound and lower or equal to an upper bound; 'mean': the threshold of a gene is determined as its mean expression across all conditions/samples)")
     
