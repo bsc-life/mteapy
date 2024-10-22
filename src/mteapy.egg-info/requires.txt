@@ -1,0 +1,10 @@
+numpy
+pandas
+cobra>=0.25.0
+argparse
+rich_argparse
+boolean.py
+pytest
+
+[test]
+pytest
