@@ -1,17 +1,24 @@
-import re
 import pandas as pd
 import numpy as np
-from cobra.core.gene import GPR
-from ast import Name, And, Or, BoolOp, Expression
 
-from cobra.core import model
+from cobra.core.gene import GPR
+from cobra.core import Model
+
+from mteapy.utils import map_gpr_w_names
 
 
 ###########################################
 # CellFie functions
 ###########################################
 
-def calculate_GAL(expr_data:pd.DataFrame, thresh_type:str = "local", local_thresh_type:str = "minmaxmean", minmaxmean_thresh_type:str = "percentile", upper_bound:float = 0.75, lower_bound:float = 0.25, global_thresh_type:str = None, global_value:float = None):
+def calculate_GAL(
+        expr_data:pd.DataFrame, 
+        thresh_type:str = "local", 
+        local_thresh_type:str = "minmaxmean", 
+        minmaxmean_thresh_type:str = "percentile", 
+        upper_bound:float = 0.75, lower_bound:float = 0.25, 
+        global_thresh_type:str = None, global_value:float = None
+    ):
     """
     Function to calculate Gene Activity Levels (GALs) from a gene expression matrix using the CellFie framework. It calculates specific thresholds internally given the inputs from the user.
 
@@ -90,38 +97,6 @@ def calculate_GAL(expr_data:pd.DataFrame, thresh_type:str = "local", local_thres
     return pd.DataFrame(gene_scores, index=expr_data.index, columns=expr_data.columns)
 
 
-def safe_eval_gpr_w_names(expr:GPR, conf_genes:dict):
-    """
-    Internal function to evaluate a gene-protein rule in an injection-safe manner (hopefully).
-    """
-    if isinstance(expr, (Expression, GPR)):
-        return safe_eval_gpr_w_names(expr.body, conf_genes)
-    
-    elif isinstance(expr, Name):
-        fgid = re.sub(r"\.\d*", "", expr.id)      # Removes "." notation from genes
-        return conf_genes.get(fgid, 0), fgid
-    
-    elif isinstance(expr, BoolOp):
-        op = expr.op
-        evaluated_values = [safe_eval_gpr_w_names(i, conf_genes) for i in expr.values]
-        filtered_values = [(value, gene) for value, gene in evaluated_values if gene in conf_genes]
-        # Return default values if no valid genes found
-        if len(filtered_values) == 0:
-            return 0, "0" 
-        if isinstance(op, Or):
-            return max(filtered_values, key=lambda x: x[0])
-        elif isinstance(op, And):
-            return min(filtered_values, key=lambda x: x[0])
-        else:
-            raise TypeError("unsupported operation " + op.__class__.__name__)
-    
-    elif expr is None:
-        return 0, "0"
-    
-    else:
-        raise TypeError("unsupported operation " + repr(expr))
-
-
 def calculate_RAL(gal_df:pd.DataFrame, gpr_dict:dict):
     """
     Function to calculate Reaction Activity Levels (RALs) from a Gene Activity Level matrix (GALs) using the CellFie framework.
@@ -153,7 +128,7 @@ def calculate_RAL(gal_df:pd.DataFrame, gpr_dict:dict):
     for i in range(len(gal_df.columns)):
         
         gene_dict = dict(zip(all_genes, gal_array[:,i]))
-        rxn_projection = np.array([safe_eval_gpr_w_names(gpr_dict[rxn], gene_dict) for rxn in all_reactions])
+        rxn_projection = np.array([map_gpr_w_names(gpr_dict[rxn], gene_dict) for rxn in all_reactions])
         
         # Adjusting RAL by the times a gene appears as the reaction projection within a sample (significancy)
         gene_frequency = np.unique(rxn_projection[:,1], return_counts=True)
@@ -197,13 +172,26 @@ def calculate_CellFie_scores(ral_df:pd.DataFrame, task_structure:pd.DataFrame):
         metabolic_scores[:,i] = [np.mean([rxn_dict.get(rxn, 0.0) for rxn in task_to_rxns[task]]) \
                                  for task in task_to_rxns]
     
-    metabolic_scores_df = pd.DataFrame(metabolic_scores, index=task_to_rxns.keys(), columns=ral_df.columns)
+    metabolic_scores_df = pd.DataFrame(
+        metabolic_scores, 
+        index=pd.Index(task_to_rxns.keys(), name="task_id"), 
+        columns=ral_df.columns
+    )
     binary_scores_df = (metabolic_scores_df >= 5 * np.log(2)).astype(int)
 
     return metabolic_scores_df, binary_scores_df
 
 
-def compute_CellFie(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:model, thresh_type:str = "local", local_thresh_type:str = "minmaxmean", minmaxmean_thresh_type:str = "percentile", upper_bound:float = 0.75, lower_bound:float = 0.25, global_thresh_type:str = None, global_value:float = None):
+def compute_CellFie(
+        expr_data:pd.DataFrame, 
+        task_structure:pd.DataFrame, 
+        model:Model, 
+        thresh_type:str = "local", 
+        local_thresh_type:str = "minmaxmean", 
+        minmaxmean_thresh_type:str = "percentile", 
+        upper_bound:float = 0.75, lower_bound:float = 0.25, 
+        global_thresh_type:str = None, global_value:float = None
+    ):
     """
     Wrapper function to compute the CellFie framework.
 
@@ -215,7 +203,7 @@ def compute_CellFie(expr_data:pd.DataFrame, task_structure:pd.DataFrame, model:m
     task_structure: pandas.DataFrame
         A boolean matrix where rows are reactions and columns metabolic tasks. Each cell contains ones or zeros, indicating whether a reaction is involved in a metabolic task.
     
-    model: cobra.core.model
+    model: cobra.core.Model
         A COBRA metabolic model.
     
     thresh_type: str ["local" | "global"] (default: "local")

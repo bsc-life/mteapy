@@ -1,7 +1,6 @@
 import re
 import pandas as pd
 import numpy as np
-from multiprocessing import Pool
 
 from ast import Name, And, Or, BoolOp, Expression
 from cobra.core.gene import GPR
@@ -62,7 +61,7 @@ def absmax(array:np.ndarray):
 
     
 
-def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
+def map_gpr(expr:GPR, gene_dict:dict, or_func:str = "absmax"):
     """
     Recursive function to parse through gene-protein-reaction (GPR) rules.
 
@@ -75,7 +74,7 @@ def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
         A dictionary of genes to their expression values.
 
     or_func: str ["absmax" | "max"]
-        Function to evaluate OR rules within a GPR rule.
+        Function to evaluate OR rules within a GPR rule (default: absmax).
     
     Returns
     -------
@@ -83,7 +82,7 @@ def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
         The expression value of the resolved GPR rule.
     """
     if isinstance(expr, (Expression, GPR)):
-        return safe_eval_gpr(expr.body, gene_dict, or_func)
+        return map_gpr(expr.body, gene_dict, or_func)
     
     elif isinstance(expr, Name):
         fgid = re.sub(r"\.\d*", "", expr.id)      # Removes "." notation from genes
@@ -93,11 +92,13 @@ def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
         op = expr.op
         if isinstance(op, Or):
             if or_func == "max":
-                return max([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values])
+                return max([map_gpr(i, gene_dict, or_func) for i in expr.values])
             elif or_func == "absmax":
-                return absmax([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values])
+                return absmax([map_gpr(i, gene_dict, or_func) for i in expr.values])
+            else:
+                raise TypeError(f"Unsupported OR function ({or_func}). Please, use absmax or max.")
         elif isinstance(op, And):
-            return min([safe_eval_gpr(i, gene_dict, or_func) for i in expr.values])
+            return min([map_gpr(i, gene_dict, or_func) for i in expr.values])
         else:
             raise TypeError("unsupported operation " + op.__class__.__name__)
     
@@ -109,12 +110,12 @@ def safe_eval_gpr(expr:GPR, gene_dict:dict, or_func:str):
         raise TypeError("unsupported operation " + repr(expr))
     
 
-def safe_eval_gpr_w_names(expr:GPR, conf_genes:dict):
+def map_gpr_w_names(expr:GPR, conf_genes:dict):
     """
     Internal function to evaluate a gene-protein rule in an injection-safe manner (hopefully).
     """
     if isinstance(expr, (Expression, GPR)):
-        return safe_eval_gpr_w_names(expr.body, conf_genes)
+        return map_gpr_w_names(expr.body, conf_genes)
     
     elif isinstance(expr, Name):
         fgid = re.sub(r"\.\d*", "", expr.id)      # Removes "." notation from genes
@@ -122,7 +123,7 @@ def safe_eval_gpr_w_names(expr:GPR, conf_genes:dict):
     
     elif isinstance(expr, BoolOp):
         op = expr.op
-        evaluated_values = [safe_eval_gpr_w_names(i, conf_genes) for i in expr.values]
+        evaluated_values = [map_gpr_w_names(i, conf_genes) for i in expr.values]
         filtered_values = [(value, gene) for value, gene in evaluated_values if gene in conf_genes]
         # Return default values if no valid genes found
         if len(filtered_values) == 0:
@@ -182,7 +183,7 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
     framework = arguments[-1]
     
     if framework == "TIDE-essential":
-        genes, lfc_vector, task_to_gene, random_seed, framework = arguments
+        genes, lfc_vector, task_to_gene, random_seed, _ = arguments
         np.random.seed(random_seed)
         np.random.shuffle(lfc_vector)
         random_gene_dict = dict(zip(genes, lfc_vector))
@@ -192,12 +193,20 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
         return np.array(random_scores)
     
     elif framework == "TIDE":
-        genes, lfc_vector, task_structure, gpr_dict, random_seed, or_func, framework = arguments
+        genes, lfc_vector, task_structure, gpr_dict, random_seed, or_func, _ = arguments
         np.random.seed(random_seed)
         np.random.shuffle(lfc_vector)
         random_gene_dict = dict(zip(genes, lfc_vector))
         
-        random_scores = [safe_eval_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
+        random_scores = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
                         for rxn in task_structure.index]
         
         return np.array(random_scores)
+    
+    else:
+        raise TypeError(f"Framework {framework} not available for parallelization.")
+
+
+# def check_model_compatibility(model, structure, type:str = "reactions"):
+#     # TODO: Function to check if a task structure/gene essentiality matrix is compatible with a metabolic model
+#     pass
