@@ -1,7 +1,8 @@
-notebooks/
+mteapy/notebooks/
 
 .pytest_cache
 mteapy/__pycache__
 mteapy/cmds/__pycache__
 mteapy/tests/__pycache__
 mteapy/mteapy.egg-info/
+mteapy.egg-info/
