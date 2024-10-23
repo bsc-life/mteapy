@@ -131,9 +131,7 @@ def compute_TIDEe(
 
     scores = calculate_TIDEe_scores(gene_dict, gene_essentiality)
     random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_jobs)
-    print(random_scores_df)
-    pvalues =  [calculate_pvalue(scores[i], random_scores_df[task], n_permutations) \
-                for i, task in enumerate(gene_essentiality.columns)]
+    pvalues =  [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(gene_essentiality.columns)]
     
     TIDE_e_results = pd.DataFrame({"task_id": gene_essentiality.columns,
                                    "score": scores,
@@ -312,8 +310,7 @@ def compute_TIDE(
         n_permutations, 
         n_jobs
     )
-    pvalues = [calculate_pvalue(scores[i], random_scores_df[task], n_permutations) \
-               for i, task in enumerate(task_structure.columns)]
+    pvalues = [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(task_structure.columns)]
 
     TIDE_results = pd.DataFrame({"task_id": task_structure.columns,
                                  "score": scores,
