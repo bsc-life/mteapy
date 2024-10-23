@@ -1,7 +1,15 @@
 import argparse
-from rich_argparse import ArgumentDefaultsRichHelpFormatter
+from rich_argparse import ArgumentDefaultsRichHelpFormatter, RichHelpFormatter
 
+import importlib.metadata
+
+
+RichHelpFormatter.group_name_formatter = str.upper
 FORMATTER = ArgumentDefaultsRichHelpFormatter
+FORMATTER.group_name_formatter = str.upper
+FORMATTER.styles["argparse.prog"] = "bold"
+
+VERSION = importlib.metadata.version("mteapy")
 
 
 def mtea_parser():
@@ -16,20 +24,22 @@ def mtea_parser():
         All analysis are based on the Human1 metabolic model (Robinson et al., 2020). 
         Uses metabolic task list from Richelle et. al 2021 and curated to Human1 (see -t for more info on metabolic tasks).
         """,
-        formatter_class=FORMATTER
+        formatter_class=RichHelpFormatter
     )
 
+    parser.add_argument("-v", "--version", action="version", version=f"[argparse.prog]%(prog)s[/] {VERSION}")
+    
     parser.add_argument("-c", "--cite", action="store_true", dest="citation_flag", help="prints information regarding citation of methods")
 
-    parser.add_argument("-t", "--task_metadata", action="store_true", dest="task_metadata", help="saves into current directory metabolic task metadata")
+    parser.add_argument("-t", "--task_metadata", action="store_true", dest="task_metadata", help="saves metabolic task metadata into current directory")
 
-    parser.add_argument("-s", "--task_metadata_sec", action="store_true", dest="task_metadata_sec", help="saves into current directory secretory metabolic task metadata")
+    parser.add_argument("-s", "--task_metadata_sec", action="store_true", dest="task_metadata_sec", help="saves secretory metabolic task metadata into current directory")
 
     subparser = parser.add_subparsers(title="commands", required=False, dest="command")
     
 
     ###########################################
-    # TIDE with essential genes parser
+    # TIDE-essential parser
     ###########################################
     
     TIDE_essential_parser = subparser.add_parser("TIDE-essential", help="performs TIDE analysis using only essential genes", formatter_class=FORMATTER)
@@ -41,8 +51,6 @@ def mtea_parser():
     TIDE_essential_parser.add_argument("-o", "--out", action="store", type=str, dest="out_filename",  default="tide_e_results.tsv", help="out file name to store permutation results")
     
     TIDE_essential_parser.add_argument("-n", "--n_permutations", action="store", type=int, dest="n_permutations", default=1000, help="number of permutations to generate")
-
-    # TIDE_essential_parser.add_argument("-s", "--secretory", action="store_true", dest="secretory_flag", help="whether to also use the secretory tasks expansion")
     
     TIDE_essential_parser.add_argument("--n_jobs", action="store", type=int, dest="n_jobs", default=1, help="number of jobs for parallel processing")
     
@@ -107,8 +115,6 @@ def mtea_parser():
     CellFie_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="file field separator")
     
     CellFie_parser.add_argument("-o", "--out", action="store", type=str, dest="out_dir", default="CellFie_results", help="out directory name to store result files")
-    
-    # CellFie_parser.add_argument("--n_jobs", action="store", type=int, dest="n_jobs", default=1, help="number of jobs for parallel processing")
     
     CellFie_parser.add_argument("--binary_scores", action="store_true", dest="binary_scores_flag", help="flag to indicate whether also return the binary metabolic score matrix")
     
