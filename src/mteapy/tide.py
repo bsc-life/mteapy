@@ -130,7 +130,8 @@ def compute_TIDEe(
     gene_essentiality = gene_essentiality.astype(bool)
 
     scores = calculate_TIDEe_scores(gene_dict, gene_essentiality)
-    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_jobs, n_permutations)
+    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_jobs)
+    print(random_scores_df)
     pvalues =  [calculate_pvalue(scores[i], random_scores_df[task], n_permutations) \
                 for i, task in enumerate(gene_essentiality.columns)]
     
