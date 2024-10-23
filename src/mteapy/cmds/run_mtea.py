@@ -6,7 +6,7 @@ from time import time
 from cobra.io import read_sbml_model
 
 from mteapy.parser import mtea_parser
-from mteapy.colors import bcolors
+from mteapy.colors import bcolors as bc
 
 from mteapy.utils import mask_lfc_values
 from mteapy.tide import compute_TIDEe, compute_TIDE
@@ -26,8 +26,8 @@ def main() -> None:
     print()
     
     if args.citation_flag:
-        print(f"{bcolors.OKBLUE}Cite TIDE:{bcolors.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
-        print(f"{bcolors.OKBLUE}Cite CellFie:{bcolors.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
+        print(f"{bc.CYAN}Cite TIDE:{bc.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
+        print(f"{bc.CYAN}Cite CellFie:{bc.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
         exit(1)
    
     if args.task_metadata:
@@ -53,7 +53,7 @@ def main() -> None:
         
         # File and dir status check
         if not os.path.isfile(args.dea_file):
-            print(f"{bcolors.FAIL}ERROR: File {args.dea_file} could not be found.{bcolors.FAIL}\n")
+            print(f"{bc.FAIL}ERROR: File {args.dea_file} could not be found.{bc.FAIL}\n")
             exit(1)
         
         # Out file handling
@@ -75,19 +75,19 @@ def main() -> None:
 
         # Column names check
         if args.lfc_col not in list(expr_data_df): 
-            print(f"{bcolors.FAIL}ERROR: LFC column name '{args.lfc_col}' not found in results file.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: LFC column name '{args.lfc_col}' not found in results file.{bc.ENDC}\n")
             exit(1)
         if args.gene_col not in list(expr_data_df):
-            print(f"{bcolors.FAIL}ERROR: Gene column name '{args.gene_col}' not found in results file.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: Gene column name '{args.gene_col}' not found in results file.{bc.ENDC}\n")
             exit(1)
         if any(expr_data_df[args.gene_col].duplicated()):
-            print(f"{bcolors.FAIL}ERROR: gene column contains duplicated entries.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
             exit(1)
             
         # Filtering LFC
         if args.filter_lfc:
             if args.pvalue_col not in list(expr_data_df):
-                print(f"{bcolors.FAIL}ERROR: P-value column name {args.pvalue_col} not in results file {args.dea_file}.{bcolors.ENDC}\n")
+                print(f"{bc.FAIL}ERROR: P-value column name {args.pvalue_col} not in results file {args.dea_file}.{bc.ENDC}\n")
                 exit(1)
             
             print(f"LFC values will be masked using their p-values (alpha = {args.alpha})", end = " ")   
@@ -122,7 +122,7 @@ def main() -> None:
 
         # File and dir status check
         if not os.path.isfile(args.dea_file):
-            print(f"{bcolors.FAIL}ERROR: File {args.dea_file} could not be found.{bcolors.FAIL}\n")
+            print(f"{bc.FAIL}ERROR: File {args.dea_file} could not be found.{bc.FAIL}\n")
             exit(1)
 
         # Out file handling
@@ -155,19 +155,19 @@ def main() -> None:
                 
         # Column names check
         if args.lfc_col not in list(expr_data_df): 
-            print(f"{bcolors.FAIL}ERROR: Log2-FC column '{args.lfc_col}' not found in input file.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: Log2-FC column '{args.lfc_col}' not found in input file.{bc.ENDC}\n")
             exit(1)
         if args.gene_col not in list(expr_data_df):
-            print(f"{bcolors.FAIL}ERROR: Gene column '{args.gene_col}' not found in input file.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: Gene column '{args.gene_col}' not found in input file.{bc.ENDC}\n")
             exit(1)
         if any(expr_data_df[args.gene_col].duplicated()):
-            print(f"{bcolors.FAIL}ERROR: gene column contains duplicated entries.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
             exit(1)
 
         # Filtering LFC
         if args.filter_lfc:
             if args.pvalue_col not in list(expr_data_df):
-                print(f"{bcolors.FAIL}ERROR: P-value column name {args.pvalue_col} not in results file {args.dea_file}.{bcolors.ENDC}\n")
+                print(f"{bc.FAIL}ERROR: P-value column name {args.pvalue_col} not in results file {args.dea_file}.{bc.ENDC}\n")
                 exit(1)
             
             print(f"LFC values will be masked using their p-values (alpha = {args.alpha})", end = " ")   
@@ -209,7 +209,7 @@ def main() -> None:
 
         # File and dir status check
         if not os.path.isfile(args.expr_file):
-            print(f"{bcolors.FAIL}ERROR: File {args.expr_file} could not be found.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: File {args.expr_file} could not be found.{bc.ENDC}\n")
             exit(1)
         
         # Out directory handling
@@ -234,10 +234,10 @@ def main() -> None:
         
         # Column names check
         if args.gene_col not in expr_data_df.columns:
-            print(f"{bcolors.FAIL}ERROR: Gene column '{args.gene_col}' not found in input file.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: Gene column '{args.gene_col}' not found in input file.{bc.ENDC}\n")
             exit(1)
         if any(expr_data_df[args.gene_col].duplicated()):
-            print(f"{bcolors.FAIL}ERROR: gene column contains duplicated entries.{bcolors.ENDC}\n")
+            print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
             exit(1)
 
         # Filtering genes not in model
@@ -291,11 +291,11 @@ def main() -> None:
         print("All analysis are based on the Human1 metabolic model (Robinson et al., 2020).", end=" ")
         print("Uses metabolic task list from Richelle et. al 2021 curated to Human1 (use --task_metadata to download list of tasks).\n")
         print("Usage: run-mtea [-h] [-c] [-t] [-s] { TIDE-essential, TIDE, CellFie } [command options]")
-        print(f"{bcolors.FAIL}Select one of the available commands (see --help for more information).{bcolors.ENDC}\n")
+        print(f"{bc.FAIL}Select one of the available commands (see --help for more information).{bc.ENDC}\n")
         exit(1)
     
     elapsed = time() - start
-    print(f"\n{bcolors.OKGREEN}Elapsed time:\t{elapsed:.3f} seconds.{bcolors.ENDC}")
+    print(f"\n{bc.OKGREEN}Elapsed time:\t{elapsed:.3f} seconds.{bc.ENDC}")
     print()
 
 
