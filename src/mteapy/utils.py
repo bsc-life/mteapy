@@ -142,7 +142,7 @@ def map_gpr_w_names(expr:GPR, conf_genes:dict):
         raise TypeError("unsupported operation " + repr(expr))
 
 
-def calculate_pvalue(score:float, random_scores:np.ndarray, n_permutations:int):
+def calculate_pvalue(score:float, random_scores:np.ndarray):
     """
     Function to calculate the empirical p-value as the probability to observe an equal or more extreme metabolic score using the null distributions generated from the random scores.
 
@@ -159,8 +159,8 @@ def calculate_pvalue(score:float, random_scores:np.ndarray, n_permutations:int):
     pvalue: float
         The empirical p-value.
     """
-    pvalue = np.minimum(np.sum(random_scores.astype(float) <= float(score)) / n_permutations,
-                        np.sum(random_scores.astype(float) >= float(score)) / n_permutations)
+    pvalue = np.minimum(np.sum(random_scores.astype(float) <= float(score)) / len(random_scores),
+                        np.sum(random_scores.astype(float) >= float(score)) / len(random_scores))
     
     return pvalue
 
