@@ -10,10 +10,9 @@ authors = [
      {name = "Miguel Ponce de Leon", email = "miguel.ponce@bsc.es"}
 ]
 description = "Python library for Metabolic Task Enrichment Analysis"
-readme = "README"
-license = "MIT"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.8"
-license = {text = "BSD 3-Clause License"}
 classifiers=[
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
