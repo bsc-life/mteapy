@@ -52,6 +52,16 @@ from mteapy.tide import compute_TIDE, compute_TIDEe
 from mteapy.cellfie import compute_CellFie
 ```
 
+### Secretory tasks
+
+MTEApy allows for the use of secretory tasks under the secretory module accessible under the option `-s` or `--secretory`, which will run the command using both the metabolic and secretory modules. This option is only available for the CellFie and TIDE frameworks, and leverages the use of an updated version of the metabolic model HumanGEM with secretory reactions and an updated task structure.
+
+```sh
+run-mtea {TIDE|Cellfie} --secretory
+```
+
+More info on the curation of secretory tasks and the updated metabolic model can be found at the repository [xavibemo/secretory-tasks](https://github.com/xavibemo/secretory-tasks).
+
 ## References
 
 1. Richelle, A.; Kellman, B.P.; Wenzel, A.T.; Chiang, A.W.; Reagan, T.; Gutierrez, J.M.; Joshi, C.; Li, S.; Liu, J.K.; Masson, H.; et al. Model-based assessment of mammalian cell metabolic functionalities using omics data. _Cell Reports Methods_ **2021**, 1, 100040. https://doi.org/10.1016/j.crmeth.2021.100040.
