@@ -16,7 +16,7 @@ from mteapy.cellfie import compute_CellFie
 def main() -> None:
 
     curdir = os.path.dirname(os.path.realpath(__file__))
-    with open(os.path.join(curdir, "../../logo_ascii.txt"), "r") as f:
+    with open(os.path.join(curdir, "../logo_ascii.txt"), "r") as f:
         logo = f.read()
         print(logo)
     
@@ -30,17 +30,17 @@ def main() -> None:
         print(f"{bc.CYAN}Cite CellFie:{bc.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
         exit(1)
    
-    if args.task_metadata:
-        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t", index_col=0)
-        task_metadata.to_csv("./task_metadata.tsv", sep="\t")
-        print("Downloaded metabolic task metadata at ./task_metadata.tsv\n")
-        exit(1)
+    # if args.task_metadata:
+    #     task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t", index_col=0)
+    #     task_metadata.to_csv("./task_metadata.tsv", sep="\t")
+    #     print("Downloaded metabolic task metadata at ./task_metadata.tsv\n")
+    #     exit(1)
 
-    if args.task_metadata_sec:
-        task_metadata_sec = pd.read_csv(os.path.join(curdir, "../data/task_metadata_sec.tsv"), sep="\t", index_col=0)
-        task_metadata_sec.to_csv("./task_metadata_sec.tsv", sep="\t")
-        print("Downloaded secretory metabolic task metadata at ./task_metadata_sec.tsv\n")
-        exit(1)
+    # if args.task_metadata_sec:
+    #     task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t", index_col=0)
+    #     task_metadata_sec.to_csv("./task_metadata_sec.tsv", sep="\t")
+    #     print("Downloaded secretory metabolic task metadata at ./task_metadata_sec.tsv\n")
+    #     exit(1)
 
         
     ###########################################
@@ -70,8 +70,8 @@ def main() -> None:
         
         # Reading in data and gene essentiality
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
-        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
-        gene_essentiality = pd.read_csv(os.path.join(curdir, "../data/HumanGEM_essential_genes_matrix.tsv"),\
+        task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
+        gene_essentiality = pd.read_csv(os.path.join(curdir, "../../data/HumanGEM_essential_genes_matrix.tsv"),\
                                         delimiter="\t", index_col=0)
 
         # Column names check
@@ -142,20 +142,20 @@ def main() -> None:
         # Reading in data, model and task structure
         # TODO: allow user to input their own metabolic model and task structures
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
-        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
-        task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"), \
+        task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
+        task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
         
         print("Loading metabolic model", end=" ")
         if args.secretory_flag:
-            model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM_secretory.xml.gz"))
-            task_metadata_sec = pd.read_csv(os.path.join(curdir, "../data/task_metadata_sec.tsv"), sep="\t")
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
+            task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
             task_metadata = pd.concat([task_metadata, task_metadata_sec])
-            task_structure_sec = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix_sec.tsv"), \
+            task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
                                              sep="\t", index_col=0)
             task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
         else:
-            model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM.xml.gz"))
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         print("- OK.")
                 
         # Column names check
@@ -225,20 +225,20 @@ def main() -> None:
         
         # Reading in data
         expr_data_df = pd.read_csv(args.expr_file, delimiter=args.sep)
-        # task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
-        task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"), \
+        # task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
+        task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
         
         print("Loading metabolic model", end=" ")
         if args.secretory_flag:
-            model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM_secretory.xml.gz"))
-            # task_metadata_sec = pd.read_csv(os.path.join(curdir, "../data/task_metadata_sec.tsv"), sep="\t")
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
+            # task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
             # task_metadata = pd.concat([task_metadata, task_metadata_sec])
-            task_structure_sec = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix_sec.tsv"), \
+            task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
                                              sep="\t", index_col=0)
             task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
         else:
-            model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM.xml.gz"))
+            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         print("- OK.")
         
         # Column names check
