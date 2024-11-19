@@ -31,9 +31,9 @@ def mtea_parser():
     
     parser.add_argument("-c", "--cite", action="store_true", dest="citation_flag", help="prints information regarding citation of methods")
 
-    parser.add_argument("-t", "--task_metadata", action="store_true", dest="task_metadata", help="saves metabolic task metadata into current directory")
+    # parser.add_argument("-t", "--task_metadata", action="store_true", dest="task_metadata", help="saves metabolic task metadata into current directory")
 
-    parser.add_argument("-s", "--task_metadata_sec", action="store_true", dest="task_metadata_sec", help="saves secretory metabolic task metadata into current directory")
+    # parser.add_argument("-s", "--task_metadata_sec", action="store_true", dest="task_metadata_sec", help="saves secretory metabolic task metadata into current directory")
 
     subparser = parser.add_subparsers(title="commands", required=False, dest="command")
     
