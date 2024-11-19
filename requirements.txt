@@ -1,7 +1,7 @@
-numpy==1.17.3
-pandas==1.2.5
-cobra==0.25.0
-argparse==1.1
-rich_argparse==1.5.2
+numpy
+pandas
+cobra=>0.25.0
+argparse
+rich_argparse
 boolean.py
 pytest
