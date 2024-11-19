@@ -10,6 +10,25 @@ from cobra.core.gene import GPR
 # Generic functions
 ###########################################
 
+def add_task_metadata(results_df:pd.DataFrame, task_metadata_df:pd.DataFrame):
+    """
+    """
+    task_metadata_df = task_metadata_df.rename(columns={
+        "ID": "task_id", 
+        "SYSTEM": "metabolic_system", 
+        "DESCRIPTION": "task_description", 
+        "SUBSYSTEM": "metabolic_subsystem"
+    })
+    task_metadata_df["metabolic_system"] = [system.title() for system in task_metadata_df["metabolic_system"]]
+    task_metadata_df["metabolic_subsystem"] = [system.title() for system in task_metadata_df["metabolic_subsystem"]]
+    
+    results_df = results_df.merge(
+        task_metadata_df[["task_id","task_description","metabolic_system","metabolic_subsystem"]], 
+        on="task_id"
+    )
+    return results_df
+
+
 def mask_lfc_values(expr_df:pd.DataFrame, lfc_col:str, pvalue_col:str, alpha:float):
     """
     Function that "masks" non-significant log-FC values to 0.
