@@ -16,7 +16,8 @@ MTEApy is a Python library for Metabolic Task Enrichment Analysis (MTEA) that le
 
 ## Installation
 
-> [!WARNING] Not implemented yet!
+> [!WARNING] 
+> Not implemented yet!
 
 To install MTEApy, you can install it using `pip`:
 

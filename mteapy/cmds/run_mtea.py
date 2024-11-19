@@ -8,7 +8,7 @@ from cobra.io import read_sbml_model
 from mteapy.parser import mtea_parser
 from mteapy.colors import bcolors as bc
 
-from mteapy.utils import mask_lfc_values
+from mteapy.utils import mask_lfc_values, add_task_metadata
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
 
@@ -70,6 +70,7 @@ def main() -> None:
         
         # Reading in data and gene essentiality
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
+        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
         gene_essentiality = pd.read_csv(os.path.join(curdir, "../data/HumanGEM_essential_genes_matrix.tsv"),\
                                         delimiter="\t", index_col=0)
 
@@ -99,7 +100,6 @@ def main() -> None:
         print(f"\tNº jobs      = {args.n_jobs}")
         print(f"\tPermutations = {args.n_permutations}")
 
-        print("Saving results", end=" ")
         TIDE_e_results = compute_TIDEe(
             expr_data_df.set_index(args.gene_col), 
             args.lfc_col,
@@ -108,6 +108,8 @@ def main() -> None:
             args.n_jobs,
             args.random_scores_flag
         )
+        print("Saving results", end=" ")
+        TIDE_e_results = add_task_metadata(TIDE_e_results, task_metadata)
         TIDE_e_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
         print("- OK.")
         
@@ -140,12 +142,15 @@ def main() -> None:
         # Reading in data, model and task structure
         # TODO: allow user to input their own metabolic model and task structures
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
+        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
         task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
         
         print("Loading metabolic model", end=" ")
         if args.secretory_flag:
             model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM_secretory.xml.gz"))
+            task_metadata_sec = pd.read_csv(os.path.join(curdir, "../data/task_metadata_sec.tsv"), sep="\t")
+            task_metadata = pd.concat([task_metadata, task_metadata_sec])
             task_structure_sec = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix_sec.tsv"), \
                                              sep="\t", index_col=0)
             task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
@@ -184,7 +189,6 @@ def main() -> None:
         else:
             print(f"\tModules      = metabolic")
         
-        print("Saving results", end = " ")
         TIDE_results = compute_TIDE(
             expr_data_df.set_index(args.gene_col), 
             args.lfc_col,
@@ -195,6 +199,8 @@ def main() -> None:
             args.n_jobs,
             args.random_scores_flag
         )
+        print("Saving results", end = " ")
+        TIDE_results = add_task_metadata(TIDE_results, task_metadata)
         TIDE_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
         print("- OK.")
         
@@ -219,12 +225,15 @@ def main() -> None:
         
         # Reading in data
         expr_data_df = pd.read_csv(args.expr_file, delimiter=args.sep)
+        # task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
         task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
         
         print("Loading metabolic model", end=" ")
         if args.secretory_flag:
             model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM_secretory.xml.gz"))
+            # task_metadata_sec = pd.read_csv(os.path.join(curdir, "../data/task_metadata_sec.tsv"), sep="\t")
+            # task_metadata = pd.concat([task_metadata, task_metadata_sec])
             task_structure_sec = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix_sec.tsv"), \
                                              sep="\t", index_col=0)
             task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
@@ -300,5 +309,5 @@ def main() -> None:
 
 
 # MAIN
-if __name__ == "__main__":
+if __name__ == "__main__": 
     main()
