@@ -97,7 +97,7 @@ def main() -> None:
             
         # Main execution
         print("Starting analysis:")
-        print(f"\tNº jobs      = {args.n_jobs}")
+        print(f"\tNº jobs      = {args.n_cpus}")
         print(f"\tPermutations = {args.n_permutations}")
 
         TIDE_e_results = compute_TIDEe(
@@ -105,7 +105,7 @@ def main() -> None:
             args.lfc_col,
             gene_essentiality, 
             args.n_permutations,
-            args.n_jobs,
+            args.n_cpus,
             args.random_scores_flag
         )
         print("Saving results", end=" ")
@@ -181,7 +181,7 @@ def main() -> None:
 
         # Main execution
         print("Starting analysis:")
-        print(f"\tNº jobs      = {args.n_jobs}")
+        print(f"\tNº jobs      = {args.n_cpus}")
         print(f"\tPermutations = {args.n_permutations}")
         print(f"\tOR function  = {args.or_func}")
         if args.secretory_flag:
@@ -196,7 +196,7 @@ def main() -> None:
             model, 
             args.or_func,
             args.n_permutations,
-            args.n_jobs,
+            args.n_cpus,
             args.random_scores_flag
         )
         print("Saving results", end = " ")
