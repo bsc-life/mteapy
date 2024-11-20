@@ -40,7 +40,7 @@ def calculate_random_TIDEe_scores(
         gene_dict:dict, 
         gene_essentiality:pd.DataFrame, 
         n_permutations:int = 1000,
-        n_jobs:int = 1
+        n_cpus:int = 1
     ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
@@ -56,7 +56,7 @@ def calculate_random_TIDEe_scores(
     n_permutations: int 
         Number of permutations to inferr significancy (default: 1000).
     
-    n_jobs: int 
+    n_cpus: int 
         Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
     Returns
@@ -69,7 +69,7 @@ def calculate_random_TIDEe_scores(
     task_to_gene = {task: gene_essentiality.index[gene_essentiality[task]].to_list() \
                     for task in gene_essentiality.columns}
 
-    if n_jobs <= 1:
+    if n_cpus <= 1:
         random_scores = np.zeros((n_permutations, len(gene_essentiality.columns)))
         for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
@@ -83,7 +83,7 @@ def calculate_random_TIDEe_scores(
                      for _ in range(n_permutations)]
         
         # Parallel execution
-        with Pool(processes=n_jobs) as pool:
+        with Pool(processes=n_cpus) as pool:
             map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
             random_scores = np.array([array for array in map_result.get()])
             
@@ -95,7 +95,7 @@ def compute_TIDEe(
         lfc_col:str,
         gene_essentiality:pd.DataFrame,
         n_permutations:int = 1000,
-        n_jobs:int = 1,
+        n_cpus:int = 1,
         random_scores_flag:bool = False
     ):
     """
@@ -115,7 +115,7 @@ def compute_TIDEe(
     n_permutations: int 
         Number of permutations to inferr significancy (default: 1000).
     
-    n_jobs: int 
+    n_cpus: int 
         Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
 
     random_scores_flag: bool
@@ -130,7 +130,7 @@ def compute_TIDEe(
     gene_essentiality = gene_essentiality.astype(bool)
 
     scores = calculate_TIDEe_scores(gene_dict, gene_essentiality)
-    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_jobs)
+    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_cpus)
     pvalues =  [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(gene_essentiality.columns)]
     
     TIDE_e_results = pd.DataFrame({"task_id": gene_essentiality.columns,
@@ -192,7 +192,7 @@ def calculate_random_TIDE_scores(
         gpr_dict:dict, 
         or_func:str,
         n_permutations:int = 1000,
-        n_jobs:int = 1
+        n_cpus:int = 1
     ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
@@ -214,7 +214,7 @@ def calculate_random_TIDE_scores(
     n_permutations: int 
         Number of permutations to inferr significancy (default: 1000).
     
-    n_jobs: int 
+    n_cpus: int 
         Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
     Returns
@@ -226,7 +226,7 @@ def calculate_random_TIDE_scores(
     lfc_vector = np.array(list(gene_dict.values()))
 
     # Decide whether to parallellise
-    if n_jobs <= 1:
+    if n_cpus <= 1:
         random_projection = np.zeros((n_permutations, len(task_structure.index)))
         for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
@@ -240,7 +240,7 @@ def calculate_random_TIDE_scores(
                     for _ in range(n_permutations)]
         
         # Parallel execution
-        with Pool(processes=n_jobs) as pool:
+        with Pool(processes=n_cpus) as pool:
             map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
             random_projection = np.array([array for array in map_result.get()])
     
@@ -263,7 +263,7 @@ def compute_TIDE(
         model:Model, 
         or_func:str,
         n_permutations:int = 1000,
-        n_jobs:int = 1,
+        n_cpus:int = 1,
         random_scores_flag:bool = False
     ):
     """
@@ -289,7 +289,7 @@ def compute_TIDE(
     n_permutations: int 
         Number of permutations to inferr significancy (default: 1000).
     
-    n_jobs: int 
+    n_cpus: int 
         Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
     Returns
@@ -308,7 +308,7 @@ def compute_TIDE(
         gpr_dict, 
         or_func, 
         n_permutations, 
-        n_jobs
+        n_cpus
     )
     pvalues = [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(task_structure.columns)]
 

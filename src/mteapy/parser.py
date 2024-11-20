@@ -52,7 +52,7 @@ def mtea_parser():
     
     TIDE_essential_parser.add_argument("-n", "--n_permutations", action="store", type=int, dest="n_permutations", default=1000, help="number of permutations to generate")
     
-    TIDE_essential_parser.add_argument("--n_jobs", action="store", type=int, dest="n_jobs", default=1, help="number of jobs for parallel processing")
+    TIDE_essential_parser.add_argument("--n_cpus", action="store", type=int, dest="n_cpus", default=1, help="number of CPUs for parallel processing")
     
     TIDE_essential_parser.add_argument("--lfc_col", action="store", type=str, dest="lfc_col", default="log2FoldChange", help="column name containing LFC values")
     
@@ -83,7 +83,7 @@ def mtea_parser():
 
     TIDE_parser.add_argument("-n", "--n_permutations", action="store", type=int, dest="n_permutations", default=1000, help="number of permutations")
     
-    TIDE_parser.add_argument("--n_jobs", action="store", type=int, dest="n_jobs", default=1,help="number of jobs for parallel processing")
+    TIDE_parser.add_argument("--n_cpus", action="store", type=int, dest="n_cpus", default=1,help="number of CPUs for parallel processing")
     
     TIDE_parser.add_argument("--lfc_col", action="store", type=str, dest="lfc_col", default="log2FoldChange", help="column name containing LFC values")
     
