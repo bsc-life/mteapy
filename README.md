@@ -32,7 +32,7 @@ git clone https://github.com/bsc-life/mteapy/
 pip install -e mteapy/
 ```
 
-## MTEA Usage
+## Usage
 
 MTEApy is comprised of two main contraint-based metabolic modeling frameworks, TIDE and CellFie, implemented in Python (the original source codes are published in Matlab at their respective repositories). Each framework runs using different types of input files.
 
