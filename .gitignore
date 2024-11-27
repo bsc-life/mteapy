@@ -1,7 +1,0 @@
-notebooks/
-
-.pytest_cache
-tests/__pycache__
-src/mteapy/__pycache__
-src/mteapy/cmds/__pycache__
-src/mteapy.egg-info/

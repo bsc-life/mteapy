@@ -16,9 +16,6 @@ MTEApy is a Python library for Metabolic Task Enrichment Analysis (MTEA) that le
 
 ## Installation
 
-> [!WARNING] 
-> Not implemented yet!
-
 To install MTEApy, you can install it using `pip`:
 
 ```sh
@@ -70,7 +67,7 @@ MTEApy allows the use of secretory tasks under the secretory module accessible u
 run-mtea {TIDE|Cellfie} --secretory [...] expr_file
 ```
 
-More info on the curation of secretory tasks and the updated metabolic model can be found at the repository [xavibemo/secretory-tasks](https://github.com/xavibemo/secretory-tasks).
+More info on the curation of secretory tasks and the updated metabolic model can be found at the repository [xavierbemo/secretory-tasks](https://github.com/xavibemo/secretory-tasks).
 
 ## References
 
