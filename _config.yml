@@ -1,6 +1,7 @@
 title: MTEAPY's homepage
 description: Python library for Metabolic Task Enrichment Analysis
 theme: jekyll-theme-cayman
+# remote_theme: zendesk/jekyll-theme-zendesk-garden@main
 show_downloads: true
 
 github:
