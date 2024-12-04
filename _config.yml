@@ -1,9 +1,35 @@
-title: MTEAPY's homepage
-description: Python library for Metabolic Task Enrichment Analysis
-theme: jekyll-theme-cayman
-# remote_theme: zendesk/jekyll-theme-zendesk-garden@main
-show_downloads: true
+title: MTEApy
+description: A Python library for Metabolic Task Enrichment Analysis
+theme: just-the-docs
+repository: bsc-life/mteapy
 
-github:
-  zip_url: https://github.com/bsc-life/mteapy/zipball/main
-  tar_url: https://github.com/bsc-life/mteapy/tarball/main
+aux_links_new_tab: true
+aux_links:
+  View MTEApy on GitHub:
+    - https://github.com/bsc-life/mteapy
+nav_links_new_tab: true
+nav_external_links:
+  - title: Download .tar.gz
+    url: https://github.com/bsc-life/mteapy/tarball/main
+  - title: View MTEApy on GitHub
+    url: https://github.com/bsc-life/mteapy
+
+footer_content: true
+color_scheme: light
+
+callouts_level: quiet # or loud
+callouts:
+  highlight:
+    color: yellow
+  important:
+    title: Important
+    color: blue
+  new:
+    title: New
+    color: green
+  note:
+    title: Note
+    color: purple
+  warning:
+    title: Warning
+    color: red
