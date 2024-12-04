@@ -1,6 +1,7 @@
 title: MTEApy
 description: A Python library for Metabolic Task Enrichment Analysis
-theme: just-the-docs
+# theme: just-the-docs
+remote_theme: just-the-docs/just-the-docs
 repository: bsc-life/mteapy
 
 aux_links_new_tab: true
