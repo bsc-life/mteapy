@@ -7,6 +7,16 @@ from cobra.core.gene import GPR
 
 
 ###########################################
+# Checkpoint functions
+###########################################
+
+def check_ensemblid(gene_array: np.ndarray):
+    """
+    """
+    checked_array = [gene.startswith("ENSG") for gene in gene_array]
+    return all(checked_array)
+
+###########################################
 # Generic functions
 ###########################################
 
