@@ -104,7 +104,7 @@ def compute_TIDEe(
     Parameters
     ----------
     expr_data: pandas.DataFrame
-        A pandas DataFrame containing gene expression change values. Row indices should correspond to the different genes, and columns should contain at least a gene column, an expression column, and a p-value column.
+        A pandas DataFrame containing gene expression change values. Row indices should correspond to the different genes, and columns should contain at least an expression column and a p-value column.
 
     lfc_col: str
         Column name in expr_data containing log-FC values.
@@ -272,7 +272,7 @@ def compute_TIDE(
     Parameters
     ----------
     expr_data: pandas.DataFrame
-        A pandas DataFrame containing gene expression values. Rows should correspond to the different genes, and columns should contain at least a gene column, an expression column, and a p-value column.
+        A pandas DataFrame containing gene expression values. Rows indices should correspond to the different genes, and columns should contain at least an expression column and a p-value column.
     
     lfc_col: str
         Column name in expr_data containing log-FC values.
