@@ -12,6 +12,7 @@ nav_order: 3
 {: .no_toc .text-delta }
 1. TOC
 {:toc}
+***
 
 ## Description
 
@@ -21,10 +22,10 @@ The **CellFie** framework is a contraint-based metabolic modeling framework that
 
 | Argument | Shortcut | Description | Default |
 |:-------- |:-------- |:----------- |:------- |
-| `expr_file` | | Filename for a normalized gene expression file (e.g., TPM). It should contain at least one column with gene names/symbols. | |
+| `expr_file` | | Filename for a normalized gene expression file (e.g., TPM). It should contain at least one column with gene names/symbols. Genes must be stored as EnsemblIDs. | |
 | `--delim` | `-d` | Field delimiter for inputed file. | `\t` |
 | `-out` | `-o` | Directory to store the analysis' results. The result file(s) will be stored in the specified directory in a tab-sepparated format (`.tsv`). | `CellFie_results/` |
-| `--gene_col` | | Name of the column in the inputed file containing gene names/symbols. | `geneID` |
+| `--gene_col` | | Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs. | `geneID` |
 | `--threshold_type` | | Determines the threshold approach to be used. A `global` approach used the same threshold for all genes whereas a `local` approach uses a different threshold for each gene when computing the gene activity levels. | `local` |
 | `--global_threshold_type` | | Whether to use a `value` or a `percentile` of the distribution of all genes as global treshold for all genes. | `percentile` |
 | `--global_value` | | Value to use as global threshold according to the `global_threshold_type` option selected. Note that percentile values must be between 0 and 1. | `0.75` |
@@ -32,7 +33,7 @@ The **CellFie** framework is a contraint-based metabolic modeling framework that
 | `--minmaxmean_threshold_type` | | Whether to use `value` or `percentile` of the distribution of all genes as upper and lower bounds. | `percentile` |
 | `--upper_bound` | | Upper bound value to be used according to the `minmaxmean_threshold_type`. Note that percentile values must be between 0 and 1. | `0.75` |
 | `--lower_bound` | | Lower bound value to be used according to the `minmaxmean_threshold_type`. Note that percentile values must be between 0 and 1. | `0.25` |
-| `--binary_scores` | | Flag to indicate whether to also return the binary metabolic score matrix as a second result file. See the original publication for more details | `False` |
+| `--binary_scores` | | Flag to indicate whether to also return the binary metabolic score matrix as a second result file. See the original publication for more details. | `False` |
 
 ## Usage Example
 
@@ -77,19 +78,19 @@ Once the analysis is run, one or two results files will be stored in the specifi
 
 | Result File | Description |
 |:----------- |:----------- |
-| `cellfie_scores.tsv` | Main result file containing the metabolic activity score values. Columns represent the samples in the original gene expression file, and rows represent all the different metabolic tasks (stored in the `task_id` column). |
-| `cellfie_binary_scores.tsv` | Secondary result file that will only be generated if the flag `--binary_scores` is specified. It has the same structure as the main result file, but contains the binary interpretation of the activity of a metabolic task (`0` if the task is considered inactive, `1` if the task is considered active). | 
+| `cellfie_scores.tsv` | Main result file containing the metabolic activity score values. Columns represent the samples in the original gene expression file, and rows represent all the different metabolic tasks (stored in the `task_id` column). In addition to the sample columns, there are three more columns containing metabolic task metadata (description, metabolic system and subsystem). |
+| `cellfie_binary_scores.tsv` | Secondary result file that will only be generated if the flag `--binary_scores` is specified. It has the same structure as the main result file, but contains the binary interpretation of the activity of a metabolic task (`0` if the task is considered inactive, `1` if the task is considered active). See the original publication for more information about active and inactive metabolic tasks. | 
 
 A standard run of the CellFie framework should produce a `cellfie_scores.tsv` file similar to the following:
 
 ```
-    task_id        S1        S2        S3        S4
-0        X1  0.076515  0.671443  0.050100  0.733470
-1        X2  0.863416  0.561653  1.204112  1.253820
-2        X3  1.354543  0.889970  1.586738  2.489626
-3        X4  1.195976  1.961420  1.423547  1.644596
-4        X5  1.554831  1.785477  1.541452  1.704194
-..      ...       ...       ...       ...       ...
+    task_id        S1        S2        S3        S4                                   task_description   metabolic_system        metabolic_subsystem
+0        X1  0.076515  0.671443  0.050100  0.733470  Oxidative phosphorylation via NADH-coQ oxidore...  Energy Metabolism  Oxydative Phosphorylation 
+1        X2  0.863416  0.561653  1.204112  1.253820  Oxidative phosphorylation via succinate-coenzy...  Energy Metabolism  Oxydative Phosphorylation
+2        X3  1.354543  0.889970  1.586738  2.489626  Krebs cycle - oxidative decarboxylation of pyr...  Energy Metabolism                Krebs Cycle
+3        X4  1.195976  1.961420  1.423547  1.644596                      Krebs cycle - NADH generation  Energy Metabolism                Krebs Cycle
+4        X5  1.554831  1.785477  1.541452  1.704194        ATP regeneration (glycolysis + krebs cycle)  Energy Metabolism             Atp Generation
+..      ...       ...       ...       ...       ...                                                ...                ...                        ...
 ```
 
-Metabolic tasks are stored using their internal IDs, and their metadata can easily retrieved at the [task_info/](https://github.com/bsc-life/mteapy/tree/main/task_info) folder at the MTEApy repository.
+For more information about metabolic tasks and their metadata, see the [task_info/](https://github.com/bsc-life/mteapy/tree/main/task_info) folder at the MTEApy repository.

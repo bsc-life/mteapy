@@ -2,3 +2,4 @@ Gemfile*
 _site/
 .jekyll-cache
 tide-tutorial.md
+src/

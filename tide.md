@@ -22,10 +22,10 @@ The **T**ask **I**nferred from **D**ifferential **E**xpression (TIDE) framework 
 
 | Argument | Shortcut | Description | Default |
 |:-------- |:-------- |:----------- |:------- |
-| `dea_file` | | Filename for a differential expression analysis results file. It should contain at least three columns: genic (string), log-FC (numeric) and significance (numeric, e.g.: p-value, adjusted p-value, FDR). | |
+| `dea_file` | | Filename for a differential expression analysis results file. It should contain at least three columns: genic (string), log-FC (numeric) and significance (numeric, e.g.: p-value, adjusted p-value, FDR). Genes must be stored as EnsemblIDs. | |
 | `--delim` | `-d` | Field delimiter for inputed file. | `\t` |
 | `-out` | `-o` | Name (and location) to store the analysis' results. They will be stored in a tab-sepparated file, so filenames should contain the  `.tsv` or `.txt` extensions. | `tide_results.tsv` |
-| `--gene_col` | | Name of the column in the inputed file containing gene names/symbols. | `geneID` |
+| `--gene_col` | | Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs. | `geneID` |
 | `--lfc_col` | | Name of the column in the inputed file containing log-FC values. | `log2FoldChange` |
 | `--pvalue_col` | | Name of the column in the inputed file containing significance values. Only required if the flag `--mask_lfc_values` is `True`. | `padj` |
 | `--alpha` | `-a` | Significance threshold to mask log-FC. Only required if the flag `--mask_lfc_values` is `True`. | `0.05` |
