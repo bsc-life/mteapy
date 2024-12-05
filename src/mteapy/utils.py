@@ -12,6 +12,17 @@ from cobra.core.gene import GPR
 
 def check_ensemblid(gene_array: np.ndarray):
     """
+    Function to check that all genes are valid EnsemblIDs.
+    
+    Parameters
+    ----------
+    gene_array: numpy.ndarray
+        An array of gene names/symbols to be checked.
+    
+    Returns
+    -------
+    check: bool
+        Whether all genes are EnsemblIDs (True) or not (False)
     """
     checked_array = [gene.startswith("ENSG") for gene in gene_array]
     return all(checked_array)
@@ -22,6 +33,20 @@ def check_ensemblid(gene_array: np.ndarray):
 
 def add_task_metadata(results_df:pd.DataFrame, task_metadata_df:pd.DataFrame):
     """
+    Helper function to format and add to any analysis results information regarding the metabolic tasks. The information will be added as three new columns: a description of the metabolic task, its metabolic system and subsystem.
+
+    Parameters
+    ----------
+    results_df: pandas.DataFrame
+        A data frame containing the results of an analysis. This data frame must contain a column named 'task_id' with the internal IDs of the metabolic tasks.
+    
+    task_metadata: pandas.DataFrame
+        The data frame containing the metadata of metabolic tasks. Its formatting must be the same as the file stored in the `task_info/` directory in this repository.
+
+    Returns
+    -------
+    results_df_annotated: pandas.DataFrame
+        The original results data frame with the three new columns added.
     """
     task_metadata_df = task_metadata_df.rename(columns={
         "ID": "task_id", 
