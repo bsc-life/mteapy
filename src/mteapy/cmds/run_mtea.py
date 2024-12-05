@@ -8,7 +8,7 @@ from cobra.io import read_sbml_model
 from mteapy.parser import mtea_parser
 from mteapy.colors import bcolors as bc
 
-from mteapy.utils import mask_lfc_values, add_task_metadata
+from mteapy.utils import mask_lfc_values, add_task_metadata, check_ensemblid
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
 
@@ -29,18 +29,6 @@ def main() -> None:
         print(f"{bc.CYAN}Cite TIDE:{bc.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
         print(f"{bc.CYAN}Cite CellFie:{bc.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
         exit(1)
-   
-    # if args.task_metadata:
-    #     task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t", index_col=0)
-    #     task_metadata.to_csv("./task_metadata.tsv", sep="\t")
-    #     print("Downloaded metabolic task metadata at ./task_metadata.tsv\n")
-    #     exit(1)
-
-    # if args.task_metadata_sec:
-    #     task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t", index_col=0)
-    #     task_metadata_sec.to_csv("./task_metadata_sec.tsv", sep="\t")
-    #     print("Downloaded secretory metabolic task metadata at ./task_metadata_sec.tsv\n")
-    #     exit(1)
 
         
     ###########################################
@@ -83,6 +71,9 @@ def main() -> None:
             exit(1)
         if any(expr_data_df[args.gene_col].duplicated()):
             print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
+            exit(1)
+        if not check_ensemblid(expr_data_df[args.gene_col].values):
+            print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
             exit(1)
             
         # Filtering LFC
@@ -146,18 +137,6 @@ def main() -> None:
         task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
         
-        print("Loading metabolic model", end=" ")
-        if args.secretory_flag:
-            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
-            task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
-            task_metadata = pd.concat([task_metadata, task_metadata_sec])
-            task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
-                                             sep="\t", index_col=0)
-            task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
-        else:
-            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
-        print("- OK.")
-                
         # Column names check
         if args.lfc_col not in list(expr_data_df): 
             print(f"{bc.FAIL}ERROR: Log2-FC column '{args.lfc_col}' not found in input file.{bc.ENDC}\n")
@@ -168,6 +147,22 @@ def main() -> None:
         if any(expr_data_df[args.gene_col].duplicated()):
             print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
             exit(1)
+        if not check_ensemblid(expr_data_df[args.gene_col].values):
+            print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
+        
+        # Loading in metabolic model
+        # print("Loading metabolic model", end=" ")
+        # if args.secretory_flag:
+        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
+        #     task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
+        #     task_metadata = pd.concat([task_metadata, task_metadata_sec])
+        #     task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
+        #                                      sep="\t", index_col=0)
+        #     task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
+        # else:
+        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        print("- OK.")        
 
         # Filtering LFC
         if args.filter_lfc:
@@ -225,21 +220,9 @@ def main() -> None:
         
         # Reading in data
         expr_data_df = pd.read_csv(args.expr_file, delimiter=args.sep)
-        # task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
+        task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
         task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
-        
-        print("Loading metabolic model", end=" ")
-        if args.secretory_flag:
-            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
-            # task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
-            # task_metadata = pd.concat([task_metadata, task_metadata_sec])
-            task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
-                                             sep="\t", index_col=0)
-            task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
-        else:
-            model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
-        print("- OK.")
         
         # Column names check
         if args.gene_col not in expr_data_df.columns:
@@ -248,6 +231,23 @@ def main() -> None:
         if any(expr_data_df[args.gene_col].duplicated()):
             print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
             exit(1)
+        if not check_ensemblid(expr_data_df[args.gene_col].values):
+            print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
+            exit(1)
+        
+        # Loading in metabolic model
+        print("Loading metabolic model", end=" ")
+        # if args.secretory_flag:
+        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
+        #     # task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
+        #     # task_metadata = pd.concat([task_metadata, task_metadata_sec])
+        #     task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
+        #                                      sep="\t", index_col=0)
+        #     task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
+        # else:
+        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        print("- OK.")
 
         # Filtering genes not in model
         model_genes = [str(gene) for gene in model.genes]
@@ -287,11 +287,15 @@ def main() -> None:
             args.global_thresh_type, args.global_value
         )
         
+        # Adding metadata
+        metabolic_scores_df = add_task_metadata(metabolic_scores_df, task_metadata)
+        binary_scores_df = add_task_metadata(binary_scores_df, task_metadata)
+
         # Saving results
         print(f"Saving results", end=" ")
-        metabolic_scores_df.to_csv(f"{args.out_dir}/cellfie-scores.tsv", sep="\t")
+        metabolic_scores_df.to_csv(f"{args.out_dir}/cellfie_scores.tsv", sep="\t", index=False)
         if args.binary_scores_flag:
-            binary_scores_df.to_csv(f"{args.out_dir}/cellfie-binary-scores.tsv", sep="\t")
+            binary_scores_df.to_csv(f"{args.out_dir}/cellfie_binary_scores.tsv", sep="\t", index=False)
         print("- OK.")
         
     
