@@ -12,7 +12,7 @@
                         |   /                        \ \._,\ '/ 
                         `'-'                          `--'  `"  
 
-MTEApy is a Python library for **Metabolic Task Enrichment Analysis** (MTEA) that leverages the use of powerful contraint-based metabolic model frameworks. It uses metabolic tasks to inferr the metabolic states or changes using transcriptomic data.
+MTEApy is a Python library and command-line tool for **Metabolic Task Enrichment Analysis** (MTEA) that leverages powerful constraint-based metabolic model frameworks. It uses metabolic tasks to infer the metabolic phenotype or changes in metabolic pathway expression based on transcriptomic data.
 
 
 ## **Installation**
@@ -32,7 +32,7 @@ pip install -e mteapy/
 
 ## **Overview**
 
-MTEApy is comprised of two main contraint-based metabolic modeling frameworks, TIDE and CellFie, implemented in Python (the original source codes are published in Matlab at their respective repositories). Each framework runs using different types of input files.
+MTEApy is comprised of two main constraint-based metabolic modelling frameworks, TIDE and CellFie, implemented in Python (the original source codes are published in Matlab at their respective repositories). Each framework runs using different types of input files.
 
 | Framework | Original Code | Description |
 | --------- | ------------- | ----------- |
