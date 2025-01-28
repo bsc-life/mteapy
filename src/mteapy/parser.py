@@ -108,7 +108,7 @@ def mtea_parser():
     
     CellFie_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="	Field delimiter for inputed file.")
     
-    CellFie_parser.add_argument("-o", "--out", action="store", type=str, dest="out_dir", default="Directory to store the analysis' results. The result file(s) will be stored in the specified directory in a tab-sepparated format (.tsv).")
+    CellFie_parser.add_argument("-o", "--out", action="store", type=str, dest="out_dir", default="cellfie_results", help="Directory to store the analysis' results. The result file(s) will be stored in the specified directory in a tab-sepparated format (.tsv).")
 
     CellFie_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
     
