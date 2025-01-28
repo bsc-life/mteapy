@@ -12,7 +12,7 @@
                         |   /                        \ \._,\ '/ 
                         `'-'                          `--'  `"  
 
-MTEApy is a Python library for **Metabolic Task Enrichment Analysis** (MTEA) that leverages the use of powerful contraint-based metabolic model frameworks. It uses metabolic tasks to inferr the metabolic states or changes using transcriptomic data.
+MTEApy is a Python library and command-line tool for **Metabolic Task Enrichment Analysis** (MTEA) that leverages powerful constraint-based metabolic model frameworks. It uses metabolic tasks to infer the metabolic phenotype or changes in metabolic pathway expression based on transcriptomic data.
 
 
 ## **Installation**
@@ -32,7 +32,7 @@ pip install -e mteapy/
 
 ## **Overview**
 
-MTEApy is comprised of two main contraint-based metabolic modeling frameworks, TIDE and CellFie, implemented in Python (the original source codes are published in Matlab at their respective repositories). Each framework runs using different types of input files.
+MTEApy is comprised of two main constraint-based metabolic modelling frameworks, TIDE and CellFie, implemented in Python (the original source codes are published in Matlab at their respective repositories). Each framework runs using different types of input files.
 
 | Framework | Original Code | Description |
 | --------- | ------------- | ----------- |
@@ -86,4 +86,5 @@ Visit [bsc-life.github.io/mteapy](https://bsc-life.github.io/mteapy/) to check t
 1. Richelle, A.; Kellman, B.P.; Wenzel, A.T.; Chiang, A.W.; Reagan, T.; Gutierrez, J.M.; Joshi, C.; Li, S.; Liu, J.K.; Masson, H.; _et al._ Model-based assessment of mammalian cell metabolic functionalities using omics data. _Cell Reports Methods_ **2021**, 1, 100040. https://doi.org/10.1016/j.crmeth.2021.100040.
 2. Dougherty, B.V.; Rawls, K.D.; Kolling, G.L.; Vinnakota, K.C.; Wallqvist, A.; Papin, J.A. Identifying functional metabolic shifts in heart failure with the integration of omics data and a heart-specific, genome-scale model. _Cell Reports_ **2021**, 34, 108836. https://doi.org/10.1016/j.celrep.2021.108836.
 3. Robinson, J.L.; Kocabaş, P.; Wang, H.; Cholley, P.E.; Cook, D.; Nilsson, A.; Anton, M.; Ferreira, R.; Domenzain, I.; Billa, V.; _et al_. An atlas of human metabolism. _Science Signaling_ **2020**, 13, eaaz1482. https://doi.org/10.1126/scisignal.aaz1482.
+
 
