@@ -179,10 +179,10 @@ def main() -> None:
         print(f"\tNº jobs      = {args.n_cpus}")
         print(f"\tPermutations = {args.n_permutations}")
         print(f"\tOR function  = {args.or_func}")
-        if args.secretory_flag:
-            print(f"\tModules      = metabolic & secretory")
-        else:
-            print(f"\tModules      = metabolic")
+        # if args.secretory_flag:
+        #     print(f"\tModules      = metabolic & secretory")
+        # else:
+        #     print(f"\tModules      = metabolic")
         
         TIDE_results = compute_TIDE(
             expr_data_df.set_index(args.gene_col), 
@@ -270,10 +270,10 @@ def main() -> None:
             if args.local_thresh_type == "minmaxmean":
                 print(f"\tUpper bound           = {args.upper_bound}")
                 print(f"\tLower bound           = {args.lower_bound}")
-        if args.secretory_flag:
-            print(f"\tModules               = metabolic & secretory")
-        else:
-            print(f"\tModules               = metabolic")
+        # if args.secretory_flag:
+        #     print(f"\tModules               = metabolic & secretory")
+        # else:
+        #     print(f"\tModules               = metabolic")
         
         # Main execution
         metabolic_scores_df, binary_scores_df = compute_CellFie(
