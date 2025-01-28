@@ -36,9 +36,9 @@ MTEApy is comprised of two main contraint-based metabolic modeling frameworks, T
 
 | Framework | Original Code | Description |
 | --------- | ------------- | ----------- |
-| **CellFie** [[1](#references)] | [LewisLabUCSD/CellFie](https://github.com/LewisLabUCSD/CellFie) | Utilises a normalized expression matrix (e.g., TPMs) to compute a gene activity score using user-defined thresholds, and then projects it into metabolic reactions. Using the participating reactions for each metabolic task, a metabolic score is computed. |
-| **TIDE** [[2](#references)] | [csbl/iCardio](https://github.com/csbl/iCardio) | Utilises a differential expression result and its log-FC values to project them into metabolic reactions. Using the participating reactions for each metabolic task, a metabolic score is computed. A p-value is assigned to each score after performing a permutation test. |
-| **TIDE-essential** | [bsc-life/mteapy](https://github.com/bsc-life/mteapy) | Utilises a differential expression result, its log-FC and essential genes to metabolic tasks to compute a metabolic score. A p-value is assigned to each score after performing a permutation test. | 
+| **CellFie** [[1](#references)] | [LewisLabUCSD/CellFie](https://github.com/LewisLabUCSD/CellFie) | Utilises a normalized expression matrix (e.g., TPMs) to compute a gene activity score using user-defined thresholds, and then projects it into metabolic reactions. Using the participating reactions for each metabolic task, a metabolic score is computed which indicates the metabolic activity of the metabolic tasks across samples. |
+| **TIDE** [[2](#references)] | [csbl/iCardio](https://github.com/csbl/iCardio) | Utilises a differential expression result and its log-FC values to project them into metabolic reactions. Using the participating reactions for each metabolic task, a metabolic score is computed which indicates the change in metabolic activity for one control-sample. A p-value is assigned to each score after performing a permutation test. |
+| **TIDE-essential** | [bsc-life/mteapy](https://github.com/bsc-life/mteapy) | Utilises a differential expression result, its log-FC and essential genes to metabolic tasks to compute a metabolic score which indicates the change in metabolic activity for one control-sample. A p-value is assigned to each score after performing a permutation test. | 
 
 MTEApy is designed to be used both as a command-line tool and as a Python module in a Jupyter Notebook or Python script.
 
@@ -60,12 +60,26 @@ from mteapy.tide import compute_TIDE, compute_TIDEe
 from mteapy.cellfie import compute_CellFie
 ```
 
-## **Tutorials**
+Additionaly, you can import some helper functions from the `mteapy.utils` module, including the `mask_lfc_values` function, which can be used to mask non-significant log-FC values to 0 for the TIDE frameworks (this feature can be selected directly from the command-line by using the flag `--maks_lfc_values`).
 
-[TO DO]
+```python
+from mteapy.utils import mask_lfc_values
+```
 
-- [TIDE/TIDE-essential]()
-- [CellFie]()
+### **Documentation**
+
+Visit [bsc-life.github.io/mteapy](https://bsc-life.github.io/mteapy/) to check the package documentation and tutorials.
+
+
+## **Citation**
+
+> Comming soon!
+
+
+## **Contact**
+
+- Xavier Benedicto Molina ([xavier.benedicto@bsc.es](mailto:xavier.benedicto@bsc.es))
+- Miguel Ponce-de-León ([miguel.ponce@bsc.es](mailto:miguel.ponce@bsc.es))
 
 ## **References**
 
@@ -73,9 +87,3 @@ from mteapy.cellfie import compute_CellFie
 2. Dougherty, B.V.; Rawls, K.D.; Kolling, G.L.; Vinnakota, K.C.; Wallqvist, A.; Papin, J.A. Identifying functional metabolic shifts in heart failure with the integration of omics data and a heart-specific, genome-scale model. _Cell Reports_ **2021**, 34, 108836. https://doi.org/10.1016/j.celrep.2021.108836.
 3. Robinson, J.L.; Kocabaş, P.; Wang, H.; Cholley, P.E.; Cook, D.; Nilsson, A.; Anton, M.; Ferreira, R.; Domenzain, I.; Billa, V.; _et al_. An atlas of human metabolism. _Science Signaling_ **2020**, 13, eaaz1482. https://doi.org/10.1126/scisignal.aaz1482.
 
-
-***
-## **Contact**
-
-- Xavier Benedicto Molina ([xavier.benedicto@bsc.es](mailto:xavier.benedicto@bsc.es))
-- Miguel Ponce-de-León ([miguel.ponce@bsc.es](mailto:miguel.ponce@bsc.es))
