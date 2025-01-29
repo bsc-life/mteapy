@@ -196,7 +196,11 @@ def main() -> None:
         )
         print("Saving results", end = " ")
         TIDE_results = add_task_metadata(TIDE_results, task_metadata)
-        TIDE_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
+        
+        # TODO FIX THIS LATER
+        columns = ["task_id", "metabolic_system", "metabolic_subsystem", "task_description", "score", "random_score", "pvalue"]
+        TIDE_results = TIDE_results[columns].sort_values(by=["metabolic_system", "metabolic_subsystem", "task_description", "pvalue"])
+        TIDE_results.to_csv(args.out_filename, index=False, sep="\t")
         print("- OK.")
         
         
