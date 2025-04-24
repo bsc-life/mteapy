@@ -21,7 +21,7 @@ def mtea_parser():
     parser = argparse.ArgumentParser(
         description="""
         Command line tool to perform Metabolic Task Enrichment Analysis (MTEA) using several methods.\n
-        All analysis are based on the Human1 metabolic model (Robinson et al., 2020). 
+        All analysis uses the Human1 metabolic model (Robinson et al., 2020). 
         Uses metabolic task list from Richelle et. al 2021 and curated to Human1 (see -t for more info on metabolic tasks).
         """,
         formatter_class=RichHelpFormatter
@@ -71,7 +71,7 @@ def mtea_parser():
     
     TIDE_parser.add_argument("dea_file", action="store", help="Filename for a differential expression analysis results file. It should contain at least three columns: genic (string), log-FC (numeric) and significance (numeric, e.g.: p-value, adjusted p-value, FDR). Genes must be stored as EnsemblIDs.") 
     
-    # TIDE_parser.add_argument("-s", "--secretory", action="store_true", dest="secretory_flag", help="whether to also use the secretory tasks expansion")
+    TIDE_parser.add_argument("-s", "--secretory", action="store_true", dest="secretory_flag", help="whether to also use the secretory tasks expansion")
     
     TIDE_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="Field delimiter for inputed file.")
     
@@ -108,7 +108,7 @@ def mtea_parser():
     
     CellFie_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="	Field delimiter for inputed file.")
     
-    CellFie_parser.add_argument("-o", "--out", action="store", type=str, dest="out_dir", default="Directory to store the analysis' results. The result file(s) will be stored in the specified directory in a tab-sepparated format (.tsv).")
+    CellFie_parser.add_argument("-o", "--out", action="store", type=str, dest="out_dir", default="cellfie_results", help="Directory to store the analysis' results. The result file(s) will be stored in the specified directory in a tab-sepparated format (.tsv).")
 
     CellFie_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
     
@@ -119,6 +119,8 @@ def mtea_parser():
     CellFie_parser.add_argument("--global_value", action="store", type=float, dest="global_value", default=0.75, help="Value to use as global threshold according to the global_threshold_type option selected. Note that percentile values must be between 0 and 1.")
     
     CellFie_parser.add_argument("--local_threshold_type", action="store", type=str, dest="local_thresh_type", default="minmaxmean", choices=["minmaxmean","mean"], help="Determines the threshold type to be used in a local approach. minmaxmean: the threshold for each gene is determined by the mean of expression values across all conditions/samples but must be higher or equal than a lower bound and lower or equal to an upper bound. mean: the threshold of a gene is determined as its mean expression across all conditions/samples.")
+
+    CellFie_parser.add_argument("-s", "--secretory", action="store_true", dest="secretory_flag", help="whether to also use the secretory tasks expansion")
     
     CellFie_parser.add_argument("--minmaxmean_threshold_type", action="store", type=str, dest="minmaxmean_thresh_type", default="percentile", choices=["percentile","value"], help="Whether to use value or percentile of the distribution of all genes as upper and lower bounds.")
     
