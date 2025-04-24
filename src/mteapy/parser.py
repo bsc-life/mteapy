@@ -35,44 +35,13 @@ def mtea_parser():
     
 
     ###########################################
-    # TIDE-essential parser
-    ###########################################
-    
-    TIDE_essential_parser = subparser.add_parser("TIDE-essential", help="performs TIDE analysis using only essential genes", formatter_class=FORMATTER)
-    
-    TIDE_essential_parser.add_argument("dea_file", action="store", help="Filename for a differential expression analysis results file. It should contain at least three columns: genic (string), log-FC (numeric) and significance (numeric, e.g.: p-value, adjusted p-value, FDR). Genes must be stored as EnsemblIDs.")
-    
-    TIDE_essential_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="Field delimiter for inputed file.")
-    
-    TIDE_essential_parser.add_argument("-o", "--out", action="store", type=str, dest="out_filename",  default="tide_e_results.tsv", help="Name (and location) to store the analysis' results. They will be stored in a tab-sepparated file, so filenames should contain the .tsv or .txt extensions.")
-    
-    TIDE_essential_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
-
-    TIDE_essential_parser.add_argument("--lfc_col", action="store", type=str, dest="lfc_col", default="log2FoldChange", help="Name of the column in the inputed file containing log-FC values.")
-
-    TIDE_essential_parser.add_argument("--pvalue_col", action="store", type=str, dest="pvalue_col", default="pvalue", help="Name of the column in the inputed file containing significance values. Only required if the flag --mask_lfc_values is True.")
-    
-    TIDE_essential_parser.add_argument("-a", "--alpha", action="store", type=float, dest="alpha", default=0.05, help="Significance threshold to mask log-FC. Only required if the flag --mask_lfc_values is True.")
-
-    TIDE_essential_parser.add_argument("-n", "--n_permutations", action="store", type=int, dest="n_permutations", default=1000, help="Number of permutations to infer p-values for the metabolic scores. The resolution of the computed p-values will depend on this number.")
-    
-    TIDE_essential_parser.add_argument("--n_cpus", action="store", type=int, dest="n_cpus", default=1, help="Number of CPUs for parallel execution.")
-    
-    TIDE_essential_parser.add_argument("--mask_lfc_values", action="store_true", dest="filter_lfc", help="Flag to indicate whether to mask log-FC values to 0 according to their significance. That is, if a log-FC value is non-significant (determined by the user), they will be masked to 0.")
-    
-    TIDE_essential_parser.add_argument("--random_scores", action="store_true", dest="random_scores_flag", help="Flag to indicate whether to return the null distribution of random scores used to inferr significance with the results file.")
-
-
-    ###########################################
     # TIDE parser
     ###########################################
 
-    TIDE_parser = subparser.add_parser("TIDE", help="performs TIDE analysis (Doughberty et al., 2021)", formatter_class=FORMATTER)
+    TIDE_parser = subparser.add_parser("TIDE", help="performs TIDE analysis (Doughberty et al., 2021) and complementary TIDE-essential", formatter_class=FORMATTER)
     
     TIDE_parser.add_argument("dea_file", action="store", help="Filename for a differential expression analysis results file. It should contain at least three columns: genic (string), log-FC (numeric) and significance (numeric, e.g.: p-value, adjusted p-value, FDR). Genes must be stored as EnsemblIDs.") 
-    
-    TIDE_parser.add_argument("-s", "--secretory", action="store_true", dest="secretory_flag", help="whether to also use the secretory tasks expansion")
-    
+        
     TIDE_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="Field delimiter for inputed file.")
     
     TIDE_parser.add_argument("-o", "--out", action="store", type=str, dest="out_filename", default="tide_results.tsv", help="Name (and location) to store the analysis’ results. They will be stored in a tab-sepparated file, so filenames should contain the .tsv or .txt extensions.")
@@ -103,8 +72,6 @@ def mtea_parser():
     CellFie_parser = subparser.add_parser("CellFie", help="performs CellFie analysis (Richelle et al., 2021)", formatter_class=FORMATTER)
     
     CellFie_parser.add_argument("expr_file", action="store", help="Filename for a normalized gene expression file (e.g., TPM). It should contain at least one column with gene names/symbols. Genes must be stored as EnsemblIDs.")
-
-    # CellFie_parser.add_argument("-s", "--secretory", action="store_true", dest="secretory_flag", help="whether to use the secretory tasks expansion")
     
     CellFie_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="	Field delimiter for inputed file.")
     

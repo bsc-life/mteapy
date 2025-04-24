@@ -26,87 +26,13 @@ def main() -> None:
         print(f"{bc.CYAN}Cite TIDE:{bc.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
         print(f"{bc.CYAN}Cite CellFie:{bc.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
         exit(1)
-
-        
-    ###########################################
-    # Performs TIDE with essential genes (TIDE-essential)
-    ###########################################
-    
-    if args.command == "TIDE-essential":
-        
-        print("Starting Tasks Inferred from Differential Expression (TIDE) analysis using  essential genes.")
-        
-        # File and dir status check
-        if not os.path.isfile(args.dea_file):
-            print(f"{bc.FAIL}ERROR: File {args.dea_file} could not be found.{bc.FAIL}\n")
-            exit(1)
-        
-        # Out file handling
-        if os.path.isfile(args.out_filename):
-            print(f"File {args.out_filename} already exists, will be overwritten.")
-        elif not os.path.isdir(os.path.dirname(args.out_filename)) and os.path.dirname(args.out_filename) != "":
-            print(f"Creating out directory {os.path.dirname(args.out_filename)}")
-            os.mkdir(os.path.dirname(args.out_filename))
-        if os.path.isdir(args.out_filename):
-            args.out_filename += "tide-essential-results.tsv"
-            print(f"Results will be saved into {args.out_filename}")
-        else:
-            print(f"Results will be saved into {args.out_filename}.")
-        
-        # Reading in data and gene essentiality
-        expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
-        task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
-        gene_essentiality = pd.read_csv(os.path.join(curdir, "../../data/HumanGEM_essential_genes_matrix.tsv"),\
-                                        delimiter="\t", index_col=0)
-
-        # Column names check
-        if args.lfc_col not in list(expr_data_df): 
-            print(f"{bc.FAIL}ERROR: LFC column name '{args.lfc_col}' not found in results file.{bc.ENDC}\n")
-            exit(1)
-        if args.gene_col not in list(expr_data_df):
-            print(f"{bc.FAIL}ERROR: Gene column name '{args.gene_col}' not found in results file.{bc.ENDC}\n")
-            exit(1)
-        if any(expr_data_df[args.gene_col].duplicated()):
-            print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
-            exit(1)
-        if not check_ensemblid(expr_data_df[args.gene_col].values):
-            print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
-            exit(1)
-            
-        # Filtering LFC
-        if args.filter_lfc:
-            if args.pvalue_col not in list(expr_data_df):
-                print(f"{bc.FAIL}ERROR: P-value column name {args.pvalue_col} not in results file {args.dea_file}.{bc.ENDC}\n")
-                exit(1)
-            
-            print(f"LFC values will be masked using their p-values (alpha = {args.alpha})", end = " ")   
-            expr_data_df = mask_lfc_values(expr_data_df, args.lfc_col, args.pvalue_col, args.alpha)
-            print("- OK")
-            
-        # Main execution
-        print("Starting analysis:")
-        print(f"\tNº jobs      = {args.n_cpus}")
-        print(f"\tPermutations = {args.n_permutations}")
-
-        TIDE_e_results = compute_TIDEe(
-            expr_data_df.set_index(args.gene_col), 
-            args.lfc_col,
-            gene_essentiality, 
-            args.n_permutations,
-            args.n_cpus,
-            args.random_scores_flag
-        )
-        print("Saving results", end=" ")
-        TIDE_e_results = add_task_metadata(TIDE_e_results, task_metadata)
-        TIDE_e_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
-        print("- OK.")
         
     
     ###########################################
-    # Performs TIDE
+    # Performs TIDE (and TIDE-essential)
     ###########################################
     
-    elif args.command == "TIDE":
+    if args.command == "TIDE":
         
         print("Starting Tasks Inferred from Differential Expression (TIDE) analysis.")
 
@@ -133,6 +59,8 @@ def main() -> None:
         task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
         task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
+        gene_essentiality = pd.read_csv(os.path.join(curdir, "../../data/HumanGEM_essential_genes_matrix.tsv"),\
+                                        delimiter="\t", index_col=0)
         
         # Column names check
         if args.lfc_col not in list(expr_data_df): 
@@ -148,16 +76,7 @@ def main() -> None:
             print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
         
         # Loading in metabolic model
-        # print("Loading metabolic model", end=" ")
-        # if args.secretory_flag:
-        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
-        #     task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
-        #     task_metadata = pd.concat([task_metadata, task_metadata_sec])
-        #     task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
-        #                                      sep="\t", index_col=0)
-        #     task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
-        # else:
-        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        print("Loading metabolic model", end=" ")
         model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         print("- OK.")        
 
@@ -176,11 +95,7 @@ def main() -> None:
         print(f"\tNº jobs      = {args.n_cpus}")
         print(f"\tPermutations = {args.n_permutations}")
         print(f"\tOR function  = {args.or_func}")
-        # if args.secretory_flag:
-        #     print(f"\tModules      = metabolic & secretory")
-        # else:
-        #     print(f"\tModules      = metabolic")
-        
+
         TIDE_results = compute_TIDE(
             expr_data_df.set_index(args.gene_col), 
             args.lfc_col,
@@ -191,13 +106,22 @@ def main() -> None:
             args.n_cpus,
             args.random_scores_flag
         )
+        TIDE_e_results = compute_TIDEe(
+            expr_data_df.set_index(args.gene_col), 
+            args.lfc_col,
+            gene_essentiality, 
+            args.n_permutations,
+            args.n_cpus,
+            args.random_scores_flag
+        )
         print("Saving results", end = " ")
-        TIDE_results = add_task_metadata(TIDE_results, task_metadata)
+        TIDE_results.rename(columns={"score": "TIDE_score", "pvalue": "TIDE_pvalue"}, inplace=True)
+        TIDE_e_results.rename(columns={"score": "TIDEe_score", "pvalue": "TIDEe_pvalue"}, inplace=True)
         
-        # TODO FIX THIS LATER
-        columns = ["task_id", "metabolic_system", "metabolic_subsystem", "task_description", "score", "random_score", "pvalue"]
-        TIDE_results = TIDE_results[columns].sort_values(by=["metabolic_system", "metabolic_subsystem", "task_description", "pvalue"])
-        TIDE_results.to_csv(args.out_filename, index=False, sep="\t")
+        # Merging TIDE and TIDE-essential results using left join
+        all_results = pd.merge(TIDE_results, TIDE_e_results, on="task_id", how="left")
+        all_results = add_task_metadata(all_results, task_metadata)
+        all_results.to_csv(args.out_filename, index=False, sep="\t", na_rep="NA")
         print("- OK.")
         
         
@@ -217,6 +141,7 @@ def main() -> None:
         # Out directory handling
         if not os.path.isdir(args.out_dir):
             os.mkdir(args.out_dir)
+        
         print(f"Results will be saved into {args.out_dir}")
         
         # Reading in data
@@ -238,24 +163,17 @@ def main() -> None:
         
         # Loading in metabolic model
         print("Loading metabolic model", end=" ")
-        # if args.secretory_flag:
-        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM_secretory.xml.gz"))
-        #     # task_metadata_sec = pd.read_csv(os.path.join(curdir, "../../data/task_metadata_sec.tsv"), sep="\t")
-        #     # task_metadata = pd.concat([task_metadata, task_metadata_sec])
-        #     task_structure_sec = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix_sec.tsv"), \
-        #                                      sep="\t", index_col=0)
-        #     task_structure = pd.concat([task_structure, task_structure_sec]).fillna(0)
-        # else:
-        #     model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
         print("- OK.")
 
         # Filtering genes not in model
         model_genes = [str(gene) for gene in model.genes]
-        print(f"Nº genes in metabolic model: {len(model_genes)}).")
+        print(f"Nº genes in metabolic model: {len(model_genes)}.")
         
         expr_data_df.set_index(args.gene_col, inplace=True)
         initial_genes = expr_data_df.index.values 
+        print(f"Nº genes in input file: {len(initial_genes)}.")
+        
         expr_data_df = expr_data_df.loc[[gene for gene in model_genes if gene in expr_data_df.index]]
         print(f"A total of {len(initial_genes)-len(expr_data_df.index)} genes were not found in the model and were removed.")
 
@@ -271,10 +189,6 @@ def main() -> None:
             if args.local_thresh_type == "minmaxmean":
                 print(f"\tUpper bound           = {args.upper_bound}")
                 print(f"\tLower bound           = {args.lower_bound}")
-        # if args.secretory_flag:
-        #     print(f"\tModules               = metabolic & secretory")
-        # else:
-        #     print(f"\tModules               = metabolic")
         
         # Main execution
         metabolic_scores_df, binary_scores_df = compute_CellFie(
