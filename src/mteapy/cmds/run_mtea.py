@@ -8,7 +8,7 @@ from cobra.io import read_sbml_model
 from mteapy.parser import mtea_parser
 from mteapy.colors import bcolors as bc
 
-from mteapy.utils import mask_lfc_values, add_task_metadata, check_ensemblid
+from mteapy.utils import print_banner, mask_lfc_values, add_task_metadata, check_ensemblid
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
 
@@ -16,13 +16,10 @@ from mteapy.cellfie import compute_CellFie
 def main() -> None:
 
     curdir = os.path.dirname(os.path.realpath(__file__))
-    with open(os.path.join(curdir, "../logo_ascii.txt"), "r") as f:
-        logo = f.read()
-        print(logo)
-    
     parser = mtea_parser()
     args = parser.parse_args()
     start = time()
+    print_banner()
     print()
     
     if args.citation_flag:
@@ -196,7 +193,11 @@ def main() -> None:
         )
         print("Saving results", end = " ")
         TIDE_results = add_task_metadata(TIDE_results, task_metadata)
-        TIDE_results.sort_values(by="pvalue").to_csv(args.out_filename, index=False, sep="\t")
+        
+        # TODO FIX THIS LATER
+        columns = ["task_id", "metabolic_system", "metabolic_subsystem", "task_description", "score", "random_score", "pvalue"]
+        TIDE_results = TIDE_results[columns].sort_values(by=["metabolic_system", "metabolic_subsystem", "task_description", "pvalue"])
+        TIDE_results.to_csv(args.out_filename, index=False, sep="\t")
         print("- OK.")
         
         
