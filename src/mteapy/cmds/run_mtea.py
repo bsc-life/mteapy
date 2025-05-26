@@ -23,7 +23,10 @@ def main() -> None:
     print()
     
     if args.citation_flag:
+        print(f"{bc.CYAN}Cite MTEApy:{bc.ENDC}\thttps://doi.org/10.1101/2025.05.08.652850")
+        print()
         print(f"{bc.CYAN}Cite TIDE:{bc.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
+        print(f"{bc.CYAN}Cite TIDE-e:{bc.ENDC}\thttps://doi.org/10.1101/2025.05.08.652850")
         print(f"{bc.CYAN}Cite CellFie:{bc.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
         exit(1)
         

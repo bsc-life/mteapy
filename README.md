@@ -73,11 +73,7 @@ Visit [bsc-life.github.io/mteapy](https://bsc-life.github.io/mteapy/) to check t
 
 ## **Citation**
 
-**Using Constraint-Based Metabolic Modeling to Elucidate Drug-Induced Metabolic Changes in a Cancer Cell Line**
-
-Xavier Benedicto, Åsmund Flobak, Miguel Ponce-de-León, Alfonso Valencia
-
-bioRxiv 2025.05.08.652850; doi: https://doi.org/10.1101/2025.05.08.652850
+Benedicto, X; Flobak, Å; Ponce-de-León, M; Valencia, A. **Using Constraint-Based Metabolic Modeling to Elucidate Drug-Induced Metabolic Changes in a Cancer Cell Line**. _BioRxiv_ 2025. https://doi.org/10.1101/2025.05.08.652850
 
 
 ## **Contact**
