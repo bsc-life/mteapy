@@ -59,10 +59,10 @@ def main() -> None:
         # Reading in data, model and task structure
         # TODO: allow user to input their own metabolic model and task structures
         expr_data_df = pd.read_csv(args.dea_file, delimiter=args.sep)
-        task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
-        task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
+        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
+        task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
-        gene_essentiality = pd.read_csv(os.path.join(curdir, "../../data/HumanGEM_essential_genes_matrix.tsv"),\
+        gene_essentiality = pd.read_csv(os.path.join(curdir, "../data/HumanGEM_essential_genes_matrix.tsv"),\
                                         delimiter="\t", index_col=0)
         
         # Column names check
@@ -80,7 +80,7 @@ def main() -> None:
         
         # Loading in metabolic model
         print("Loading metabolic model", end=" ")
-        model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM.xml.gz"))
         print("- OK.")        
 
         # Filtering LFC
@@ -149,8 +149,8 @@ def main() -> None:
         
         # Reading in data
         expr_data_df = pd.read_csv(args.expr_file, delimiter=args.sep)
-        task_metadata = pd.read_csv(os.path.join(curdir, "../../data/task_metadata.tsv"), sep="\t")
-        task_structure = pd.read_csv(os.path.join(curdir, "../../data/task_structure_matrix.tsv"), \
+        task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
+        task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"), \
                                      sep="\t", index_col=0)
         
         # Column names check
@@ -166,7 +166,7 @@ def main() -> None:
         
         # Loading in metabolic model
         print("Loading metabolic model", end=" ")
-        model = read_sbml_model(os.path.join(curdir, "../../data/HumanGEM.xml.gz"))
+        model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM.xml.gz"))
         print("- OK.")
 
         # Filtering genes not in model
