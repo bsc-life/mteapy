@@ -135,7 +135,7 @@ def compute_TIDEe(
     
     TIDE_e_results = pd.DataFrame({"task_id": gene_essentiality.columns,
                                    "score": scores,
-                                   "random_score": random_scores_df.mean(),
+                                   #"random_score": random_scores_df.mean(),
                                    "pvalue": pvalues
                                     })
     
@@ -314,7 +314,7 @@ def compute_TIDE(
 
     TIDE_results = pd.DataFrame({"task_id": task_structure.columns,
                                  "score": scores,
-                                 "random_score": random_scores_df.mean(),
+                                #"random_score": random_scores_df.mean(),
                                  "pvalue": pvalues
                                 })
     
