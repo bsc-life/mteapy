@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mteapy"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
      {name = "Xavier Benedicto Molina", email = "xavier.benedicto@bsc.es"},
      {name = "Miguel Ponce de Leon", email = "miguel.ponce@bsc.es"}
