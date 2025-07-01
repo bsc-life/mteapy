@@ -269,10 +269,14 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
         return np.array(random_scores)
     
     elif framework == "TIDE":
-        genes, lfc_vector, task_structure, gpr_dict, random_seed, or_func, _ = arguments
+        genes, lfc_vector, task_structure, gpr_string_dict, random_seed, or_func, _ = arguments
         np.random.seed(random_seed)
         np.random.shuffle(lfc_vector)
         random_gene_dict = dict(zip(genes, lfc_vector))
+        
+        # Convert string GPR rules back to GPR objects
+        gpr_dict = {rxn_id: GPR.from_string(gpr_str) if gpr_str else None 
+                   for rxn_id, gpr_str in gpr_string_dict.items()}
         
         random_scores = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
                         for rxn in task_structure.index]
