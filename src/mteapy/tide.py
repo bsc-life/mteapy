@@ -235,8 +235,11 @@ def calculate_random_TIDE_scores(
                                       for rxn in task_structure.index]
 
     else:
+        # Convert GPR objects to strings for serialization
+        gpr_string_dict = {rxn_id: str(gpr) if gpr else None for rxn_id, gpr in gpr_dict.items()}
+        
         # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_structure, gpr_dict, np.random.random_integers(0,1e6), or_func, "TIDE") \
+        arguments = [(genes, lfc_vector, task_structure, gpr_string_dict, np.random.random_integers(0,1e6), or_func, "TIDE") \
                     for _ in range(n_permutations)]
         
         # Parallel execution
