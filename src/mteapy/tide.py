@@ -40,7 +40,8 @@ def calculate_random_TIDEe_scores(
         gene_dict:dict, 
         gene_essentiality:pd.DataFrame, 
         n_permutations:int = 1000,
-        n_cpus:int = 1
+        n_cpus:int = 1,
+        random_seed:int = None
     ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
@@ -69,6 +70,10 @@ def calculate_random_TIDEe_scores(
     task_to_gene = {task: gene_essentiality.index[gene_essentiality[task]].to_list() \
                     for task in gene_essentiality.columns}
 
+    # Set random seed for reproducibility
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
     if n_cpus <= 1:
         random_scores = np.zeros((n_permutations, len(gene_essentiality.columns)))
         for i in range(n_permutations):
@@ -78,9 +83,15 @@ def calculate_random_TIDEe_scores(
                                   for task in task_to_gene]
             
     else:
+        # Generate deterministic seeds for parallel processing
+        if random_seed is not None:
+            seeds = [random_seed + i for i in range(n_permutations)]
+        else:
+            seeds = [np.random.random_integers(0,1e6) for _ in range(n_permutations)]
+        
         # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_to_gene, np.random.random_integers(0,1e6), "TIDE-essential") \
-                     for _ in range(n_permutations)]
+        arguments = [(genes, lfc_vector, task_to_gene, seeds[i], "TIDE-essential") \
+                     for i in range(n_permutations)]
         
         # Parallel execution
         with Pool(processes=n_cpus) as pool:
@@ -96,7 +107,8 @@ def compute_TIDEe(
         gene_essentiality:pd.DataFrame,
         n_permutations:int = 1000,
         n_cpus:int = 1,
-        random_scores_flag:bool = False
+        random_scores_flag:bool = False,
+        random_seed:int = None
     ):
     """
     Wrapper function to compute the TIDE-essential framework.
@@ -121,6 +133,9 @@ def compute_TIDEe(
     random_scores_flag: bool
         Flag to indicate whether to add to the results DataFrame the null distributions (default: False).
     
+    random_seed: int
+        Random seed for reproducibility. If None, random seeds will be generated (default: None).
+    
     Returns
     -------
     TIDE_e_results: pandas.DataFrame
@@ -130,7 +145,7 @@ def compute_TIDEe(
     gene_essentiality = gene_essentiality.astype(bool)
 
     scores = calculate_TIDEe_scores(gene_dict, gene_essentiality)
-    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_cpus)
+    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_cpus, random_seed)
     pvalues =  [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(gene_essentiality.columns)]
     
     TIDE_e_results = pd.DataFrame({"task_id": gene_essentiality.columns,
@@ -192,7 +207,8 @@ def calculate_random_TIDE_scores(
         gpr_dict:dict, 
         or_func:str,
         n_permutations:int = 1000,
-        n_cpus:int = 1
+        n_cpus:int = 1,
+        random_seed:int = None
     ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
@@ -217,6 +233,9 @@ def calculate_random_TIDE_scores(
     n_cpus: int 
         Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
+    random_seed: int
+        Random seed for reproducibility. If None, random seeds will be generated (default: None).
+    
     Returns
     -------
     random_scores_df: pandas.DataFrame
@@ -224,6 +243,10 @@ def calculate_random_TIDE_scores(
     """
     genes = list(gene_dict.keys())
     lfc_vector = np.array(list(gene_dict.values()))
+
+    # Set random seed for reproducibility
+    if random_seed is not None:
+        np.random.seed(random_seed)
 
     # Decide whether to parallellise
     if n_cpus <= 1:
@@ -238,9 +261,15 @@ def calculate_random_TIDE_scores(
         # Convert GPR objects to strings for serialization
         gpr_string_dict = {rxn_id: str(gpr) if gpr else None for rxn_id, gpr in gpr_dict.items()}
         
+        # Generate deterministic seeds for parallel processing
+        if random_seed is not None:
+            seeds = [random_seed + i for i in range(n_permutations)]
+        else:
+            seeds = [np.random.random_integers(0,1e6) for _ in range(n_permutations)]
+        
         # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_structure, gpr_string_dict, np.random.random_integers(0,1e6), or_func, "TIDE") \
-                    for _ in range(n_permutations)]
+        arguments = [(genes, lfc_vector, task_structure, gpr_string_dict, seeds[i], or_func, "TIDE") \
+                    for i in range(n_permutations)]
         
         # Parallel execution
         with Pool(processes=n_cpus) as pool:
@@ -267,7 +296,8 @@ def compute_TIDE(
         or_func:str,
         n_permutations:int = 1000,
         n_cpus:int = 1,
-        random_scores_flag:bool = False
+        random_scores_flag:bool = False,
+        random_seed:int = None
     ):
     """
     Wrapper function to compute the TIDE framework.
@@ -295,6 +325,12 @@ def compute_TIDE(
     n_cpus: int 
         Number of jobs to parallelize the computation. If 1, the run is not parallellized (default: 1).
     
+    random_scores_flag: bool
+        Flag to indicate whether to add to the results DataFrame the null distributions (default: False).
+    
+    random_seed: int
+        Random seed for reproducibility. If None, random seeds will be generated (default: None).
+    
     Returns
     -------
     TIDE_results: pandas.DataFrame
@@ -311,7 +347,8 @@ def compute_TIDE(
         gpr_dict, 
         or_func, 
         n_permutations, 
-        n_cpus
+        n_cpus,
+        random_seed
     )
     pvalues = [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(task_structure.columns)]
 
