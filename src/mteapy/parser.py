@@ -46,7 +46,7 @@ def mtea_parser():
     
     TIDE_parser.add_argument("-o", "--out", action="store", type=str, dest="out_filename", default="tide_results.tsv", help="Name (and location) to store the analysis’ results. They will be stored in a tab-sepparated file, so filenames should contain the .tsv or .txt extensions.")
 
-    TIDE_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
+    TIDE_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="gene_id", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
     
     TIDE_parser.add_argument("--lfc_col", action="store", type=str, dest="lfc_col", default="log2FoldChange", help="Name of the column in the inputed file containing log-FC values.")
 
@@ -63,6 +63,8 @@ def mtea_parser():
     TIDE_parser.add_argument("--mask_lfc_values", action="store_true", dest="filter_lfc", help="Flag to indicate whether to mask log-FC values to 0 according to their significance. That is, if a log-FC value is non-significant (determined by the user), they will be masked to 0.")
     
     TIDE_parser.add_argument("--random_scores", action="store_true", dest="random_scores_flag", help="Flag to indicate whether to return the null distribution of random scores used to inferr significance with the results file.")
+    
+    TIDE_parser.add_argument("--random_seed", action="store", type=int, dest="random_seed", default=None, help="Random seed for reproducibility. If not provided, a random seed will be generated for each run.")
     
     
     ###########################################

@@ -95,6 +95,10 @@ def main() -> None:
         print(f"\tNº jobs      = {args.n_cpus}")
         print(f"\tPermutations = {args.n_permutations}")
         print(f"\tOR function  = {args.or_func}")
+        
+        if args.random_seed is not None:
+            print(f"\tRandom seed  = {args.random_seed}")
+
 
         TIDE_results = compute_TIDE(
             expr_data_df.set_index(args.gene_col), 
@@ -104,7 +108,8 @@ def main() -> None:
             args.or_func,
             args.n_permutations,
             args.n_cpus,
-            args.random_scores_flag
+            args.random_scores_flag,
+            args.random_seed
         )
         TIDE_e_results = compute_TIDEe(
             expr_data_df.set_index(args.gene_col), 
@@ -112,7 +117,8 @@ def main() -> None:
             gene_essentiality, 
             args.n_permutations,
             args.n_cpus,
-            args.random_scores_flag
+            args.random_scores_flag,
+            args.random_seed
         )
         print("Saving results", end = " ")
         TIDE_results.rename(columns={"score": "TIDE_score", "pvalue": "TIDE_pvalue"}, inplace=True)
