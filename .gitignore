@@ -9,3 +9,9 @@ src/mteapy.egg-info/
 Gemfile*
 _site/
 .jekyll-cache
+
+
+venv/
+env/
+.env/
+.venv/
