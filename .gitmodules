@@ -1,0 +1,3 @@
+[submodule "src/mteapy/data/Human-GEM"]
+	path = src/mteapy/data/Human-GEM
+	url = https://github.com/bsc-life/Human-GEM
