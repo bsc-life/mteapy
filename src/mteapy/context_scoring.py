@@ -20,7 +20,8 @@ Pipeline per (task, sample):
    requirement), and take a reaction's score as the max across its own
    candidate complexes (an OR choice) -- together this reproduces exactly
    what `map_gpr` would compute for that reaction alone, while also
-   recording *which* complex achieved the max, which `map_gpr` discards.
+   recording *which* complex achieved the max (or why none did -- see
+   `ReactionEvidence` below), which `map_gpr` discards entirely.
 3. Aggregate a route's score from its reactions' scores: "min" (the
    strict weakest-link choice this project's own route-tie analysis
    validated) or "median" (offered as the more permissive alternative
@@ -32,11 +33,15 @@ Pipeline per (task, sample):
    scores systematically (and invisibly) favoured whichever route
    happened to be enumerated first -- see `tied_argmax` below.
 
-`score_task` returns the full per-route, per-reaction, per-complex
-breakdown for one (task, sample) -- the interpretability payoff of this
-whole approach. `score_tasks_matrix` wraps it into a plain tasks x samples
-score matrix, the same shape CellFie/TIDE-style scores use, for drop-in
-comparison or downstream differential-activity testing.
+Every call returns a full report, not just a number: `score_task` gives a
+`TaskActivityReport` covering *every* candidate route (not only the
+winner), and every reaction within each route keeps its full per-complex
+score breakdown and an explicit `ReactionEvidence` classification -- a
+score of exactly 0 for a reaction that has no GPR at all (a transporter by
+diffusion, a spontaneous reaction) means something categorically different
+from a score of 0 for a reaction with real candidate complexes that
+happen to show no expression support anywhere, and this report keeps that
+distinction visible rather than collapsing both to a bare "0.0".
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass, field
+from enum import Enum
 
 import pandas as pd
 from cobra.core import Model
@@ -52,23 +58,48 @@ from mteapy.complexes import get_enzymes
 
 _SUPPORTED_AGGREGATIONS = ("min", "median")
 
+Complex = tuple[str, ...]
+
+
+class ReactionEvidence(Enum):
+    """How well-supported one reaction's score is, for one sample."""
+
+    NO_GPR = "no_gpr"
+    """The reaction has no gene association at all (diffusion, a spontaneous
+    reaction, or simply un-annotated). There is nothing to evaluate -- this
+    is not evidence of absence, it's absence of a gene-level control point."""
+
+    NO_EVIDENCE = "no_evidence"
+    """The reaction has one or more candidate complexes, but every one of
+    them scored exactly 0 against this sample's expression: real genes are
+    annotated, but none show any supporting expression."""
+
+    AMBIGUOUS = "ambiguous"
+    """More than one candidate complex tied for the (non-zero) top score.
+    The reaction's score is well-defined; which specific complex earned it
+    is not."""
+
+    SUPPORTED = "supported"
+    """Exactly one candidate complex uniquely achieved the (non-zero) top
+    score: the cleanest possible case."""
+
 
 def tied_argmax(scores: dict, rel_tol: float = 1e-9, abs_tol: float = 1e-9) -> tuple:
     """All keys tied for the max value in `scores`, within floating tolerance.
 
-    Returns an empty tuple for an empty `scores` (e.g. a route with no
-    reactions), a single-element tuple for a clear winner, and a
-    multi-element tuple when several keys are genuinely tied -- callers
-    must not just take `[0]` and assume it means anything on its own; check
-    `len(...)` (or use `TaskActivityResult.is_tied`) first.
+    Returns an empty tuple for an empty `scores`, a single-element tuple for
+    a clear winner, and a multi-element tuple when several keys are
+    genuinely tied -- callers must not just take `[0]` and assume it means
+    anything on its own; check `len(...)` first.
     """
     if not scores:
         return ()
     max_val = max(scores.values())
-    return tuple(sorted(k for k, v in scores.items() if math.isclose(v, max_val, rel_tol=rel_tol, abs_tol=abs_tol)))
+    return tuple(sorted((k for k, v in scores.items() if math.isclose(v, max_val, rel_tol=rel_tol, abs_tol=abs_tol)),
+                         key=lambda c: c))
 
 
-def build_complex_cache(model: Model, reaction_ids) -> dict[str, tuple[tuple[str, ...], ...]]:
+def build_complex_cache(model: Model, reaction_ids) -> dict[str, tuple[Complex, ...]]:
     """Precompute reaction_id -> candidate complexes for every id in `reaction_ids`.
 
     A reaction's GPR structure doesn't depend on the sample being scored,
@@ -84,23 +115,38 @@ def build_complex_cache(model: Model, reaction_ids) -> dict[str, tuple[tuple[str
     return cache
 
 
-def score_reaction(
-    complexes: tuple[tuple[str, ...], ...], gene_dict: dict[str, float]
-) -> tuple[float, tuple[str, ...] | None]:
-    """Score one reaction's candidate complexes against `gene_dict`.
+@dataclass
+class ReactionAssessment:
+    """One reaction's full scoring breakdown for one sample."""
 
-    Returns `(reaction_score, winning_complex)`. `winning_complex` is the
-    single tied_argmax winner, or `None` if the complex-level winner is
-    itself ambiguous (two-plus complexes tied) -- the reaction's own score
-    is still perfectly well-defined in that case, only the attribution of
-    *which* complex earned it is ambiguous.
-    """
+    reaction_id: str
+    score: float
+    complex_scores: dict[Complex, float] = field(default_factory=dict)
+    """Every candidate complex considered, each with its own score -- not
+    just the winner, so a near-miss alternative complex stays visible."""
+    winning_complexes: tuple[Complex, ...] = ()
+    """The tied_argmax winner set among `complex_scores`. Empty when
+    `evidence` is NO_GPR or NO_EVIDENCE (there is no meaningful "winner"
+    among complexes that are absent or all show zero support) -- even
+    though, numerically, "all tied at 0" would otherwise also satisfy
+    tied_argmax, that is not reported here as a winning set."""
+    evidence: ReactionEvidence = ReactionEvidence.NO_GPR
+
+
+def assess_reaction(reaction_id: str, complexes: tuple[Complex, ...], gene_dict: dict[str, float]) -> ReactionAssessment:
+    """Score one reaction's candidate complexes against `gene_dict` and classify the result."""
     if not complexes:
-        return 0.0, None
-    scores = {c: min(gene_dict.get(g, 0.0) for g in c) for c in complexes}
-    winners = tied_argmax(scores)
-    winning_complex = winners[0] if len(winners) == 1 else None
-    return scores[winners[0]], winning_complex
+        return ReactionAssessment(reaction_id, 0.0, {}, (), ReactionEvidence.NO_GPR)
+
+    complex_scores = {c: min(gene_dict.get(g, 0.0) for g in c) for c in complexes}
+    score = max(complex_scores.values())
+
+    if score == 0.0:
+        return ReactionAssessment(reaction_id, 0.0, complex_scores, (), ReactionEvidence.NO_EVIDENCE)
+
+    winners = tied_argmax(complex_scores)
+    evidence = ReactionEvidence.SUPPORTED if len(winners) == 1 else ReactionEvidence.AMBIGUOUS
+    return ReactionAssessment(reaction_id, score, complex_scores, winners, evidence)
 
 
 def _aggregate(values: list[float], aggregation: str) -> float:
@@ -114,43 +160,80 @@ def _aggregate(values: list[float], aggregation: str) -> float:
 
 
 @dataclass
-class RouteScore:
-    """One route's score for one sample, with its full reaction-level breakdown."""
+class RouteReport:
+    """One route's full scoring breakdown for one sample."""
 
     route_id: int
     score: float
-    reaction_scores: dict[str, float] = field(default_factory=dict)
-    # None where the complex-level winner was itself ambiguous for that reaction.
-    reaction_complex: dict[str, tuple[str, ...] | None] = field(default_factory=dict)
+    aggregation: str
+    reactions: dict[str, ReactionAssessment] = field(default_factory=dict)
+
+    @property
+    def is_complete(self) -> bool:
+        """True if every gene-associated reaction along this route is
+        cleanly SUPPORTED. NO_GPR reactions don't count against
+        completeness -- there is nothing to evaluate for them, so their
+        presence is not a gap in the evidence. AMBIGUOUS and NO_EVIDENCE
+        reactions do count against it: they are real gaps in what this
+        route's score can be said to be backed by.
+        """
+        return all(
+            r.evidence == ReactionEvidence.SUPPORTED
+            for r in self.reactions.values()
+            if r.evidence != ReactionEvidence.NO_GPR
+        )
+
+    @property
+    def incomplete_reactions(self) -> tuple[str, ...]:
+        """reaction_ids responsible for `is_complete` being False."""
+        return tuple(sorted(
+            rid for rid, r in self.reactions.items()
+            if r.evidence in (ReactionEvidence.NO_EVIDENCE, ReactionEvidence.AMBIGUOUS)
+        ))
 
 
 @dataclass
-class TaskActivityResult:
-    """One task's context-aware activity result for one sample."""
+class TaskActivityReport:
+    """One task's full context-aware activity report for one sample."""
 
     task_id: str
-    winning_route_ids: tuple[int, ...]
     score: float
-    route_scores: dict[int, RouteScore] = field(default_factory=dict)
+    """The task's global activity score for this sample -- the winning
+    route(s)' score (all tied winners share the same score, by definition)."""
+    winning_route_ids: tuple[int, ...]
+    routes: dict[int, RouteReport] = field(default_factory=dict)
+    """Every candidate route's report, not only the winner(s) -- so a
+    near-miss alternate route stays inspectable."""
 
     @property
     def is_tied(self) -> bool:
         """True when more than one route is tied for the top score.
 
-        Route-level ties turned out to be the norm, not the exception (see
-        module docstring) -- always check this before treating
+        Route-level ties turned out to be the norm, not the exception in
+        this project's own analysis -- always check this before treating
         `winning_route_ids[0]` as *the* answer.
         """
         return len(self.winning_route_ids) > 1
 
+    @property
+    def is_complete(self) -> bool:
+        """True only if every winning route (all of them, in case of a tie)
+        is itself complete. False (partial) if the winning route relies on
+        any reaction with ambiguous or absent expression evidence, or if
+        the task itself has no winning route at all (e.g. an empty route
+        set)."""
+        if not self.winning_route_ids:
+            return False
+        return all(self.routes[rid].is_complete for rid in self.winning_route_ids)
+
 
 def score_task(
     task_routes: dict[int, frozenset[str]],
-    complex_cache: dict[str, tuple[tuple[str, ...], ...]],
+    complex_cache: dict[str, tuple[Complex, ...]],
     gene_dict: dict[str, float],
     aggregation: str = "min",
     task_id: str = "",
-) -> TaskActivityResult:
+) -> TaskActivityReport:
     """Score every candidate route of one task against one sample's expression.
 
     Parameters
@@ -173,26 +256,26 @@ def score_task(
         Carried through to the result only for the caller's convenience
         (e.g. building a results table); not used in scoring.
     """
-    route_scores: dict[int, RouteScore] = {}
+    if aggregation not in _SUPPORTED_AGGREGATIONS:
+        raise ValueError(f"Unsupported aggregation {aggregation!r}; use one of {_SUPPORTED_AGGREGATIONS}")
+
+    route_reports: dict[int, RouteReport] = {}
     for route_id, reactions in task_routes.items():
-        reaction_scores: dict[str, float] = {}
-        reaction_complex: dict[str, tuple[str, ...] | None] = {}
-        for rid in reactions:
-            complexes = complex_cache.get(rid, ())
-            score, winner = score_reaction(complexes, gene_dict)
-            reaction_scores[rid] = score
-            reaction_complex[rid] = winner
-        agg_score = _aggregate(list(reaction_scores.values()), aggregation)
-        route_scores[route_id] = RouteScore(route_id, agg_score, reaction_scores, reaction_complex)
+        assessments = {
+            rid: assess_reaction(rid, complex_cache.get(rid, ()), gene_dict)
+            for rid in reactions
+        }
+        agg_score = _aggregate([a.score for a in assessments.values()], aggregation)
+        route_reports[route_id] = RouteReport(route_id, agg_score, aggregation, assessments)
 
-    top = tied_argmax({rid: rs.score for rid, rs in route_scores.items()})
-    final_score = route_scores[top[0]].score if top else 0.0
+    winning_route_ids = tied_argmax({rid: r.score for rid, r in route_reports.items()})
+    final_score = route_reports[winning_route_ids[0]].score if winning_route_ids else 0.0
 
-    return TaskActivityResult(
+    return TaskActivityReport(
         task_id=task_id,
-        winning_route_ids=top,
         score=final_score,
-        route_scores=route_scores,
+        winning_route_ids=winning_route_ids,
+        routes=route_reports,
     )
 
 
@@ -201,15 +284,17 @@ def score_tasks_matrix(
     model: Model,
     expr_df: pd.DataFrame,
     aggregation: str = "min",
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Score every task in `tasks_routes` against every sample (column) in `expr_df`.
 
-    Returns a plain tasks x samples score matrix -- the same shape a
-    CellFie/TIDE score matrix has, so it can be dropped into the same
-    downstream differential-activity workflow. This is the scalar-only
-    convenience wrapper; call `score_task` directly (per task, per sample)
-    when the route/complex breakdown itself is wanted, not just the final
-    number.
+    Returns `(scores, complete)`, two tasks x samples DataFrames of the same
+    shape a CellFie/TIDE score matrix has: `scores` holds each cell's
+    activity score, `complete` the companion boolean (`TaskActivityReport
+    .is_complete`) -- so a caller working matrix-first still sees which
+    scores rest on ambiguous or absent evidence rather than that
+    information being silently dropped. Call `score_task` directly (per
+    task, per sample) for the full per-route/per-reaction/per-complex
+    report, not just these two numbers.
 
     Parameters
     ----------
@@ -227,13 +312,16 @@ def score_tasks_matrix(
     all_reactions = sorted({r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
     complex_cache = build_complex_cache(model, all_reactions)
 
-    rows: dict[str, dict[str, float]] = {}
+    score_rows: dict[str, dict[str, float]] = {}
+    complete_rows: dict[str, dict[str, bool]] = {}
     for task_id, routes in tasks_routes.items():
-        row = {}
+        score_row, complete_row = {}, {}
         for sample in expr_df.columns:
             gene_dict = expr_df[sample].to_dict()
-            result = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id)
-            row[sample] = result.score
-        rows[task_id] = row
+            report = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id)
+            score_row[sample] = report.score
+            complete_row[sample] = report.is_complete
+        score_rows[task_id] = score_row
+        complete_rows[task_id] = complete_row
 
-    return pd.DataFrame(rows).T
+    return pd.DataFrame(score_rows).T, pd.DataFrame(complete_rows).T
