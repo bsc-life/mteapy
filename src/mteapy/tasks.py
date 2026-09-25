@@ -222,6 +222,13 @@ def parse_task_file(path: str) -> list[MetabolicTask]:
     ``;``-separated values in a single cell, and/or continuation rows (rows
     with an empty ``ID``) that add more inputs/outputs/equations/changed
     bounds to the task started by the previous non-empty-ID row.
+
+    A task is skipped entirely (not returned) if its leading index column
+    (the blank column before ``ID``, when the file has one) holds ``#``
+    instead of being empty -- the convention Human-GEM's own task list uses
+    to disable a task while documenting why, e.g. a metabolite reference
+    that conflicts with the current model, rather than deleting the row.
+    Any continuation rows belonging to a disabled task are skipped too.
     """
     with open(path, newline="") as fh:
         reader = csv.reader(fh, delimiter="\t")
@@ -245,6 +252,7 @@ def parse_task_file(path: str) -> list[MetabolicTask]:
         acc: dict[str, list] | None = None
 
         for raw_row in reader:
+            is_disabled_row = offset == 1 and len(raw_row) > 0 and raw_row[0].strip().startswith("#")
             row = raw_row[offset:]
             # Pad/truncate defensively in case of ragged rows.
             row = row + [""] * (len(header) - len(row))
@@ -253,12 +261,15 @@ def parse_task_file(path: str) -> list[MetabolicTask]:
             if row_dict.get("ID", "").strip():
                 if header_row is not None:
                     tasks.append(_finalize_task(header_row, acc))
+                if is_disabled_row:
+                    header_row = None  # continuation rows below are skipped too, same as a stray blank row
+                    continue
                 header_row = row_dict
                 acc = _new_accumulator()
                 _accumulate_row(acc, row_dict)
             else:
                 if header_row is None:
-                    continue  # stray blank row before the first task
+                    continue  # stray blank row before the first task, or inside a disabled task
                 _accumulate_row(acc, row_dict)
 
         if header_row is not None:

@@ -114,3 +114,45 @@ def test_missing_id_column_raises(tmp_path):
     path = _write(tmp_path, "tasks.tsv", content)
     with pytest.raises(TaskParseError):
         parse_task_file(path)
+
+
+def test_hash_prefixed_row_is_skipped_entirely(tmp_path):
+    # Human-GEM's own task list convention: a "#" in the leading (normally
+    # blank) index column disables a task while documenting why, instead of
+    # deleting the row -- e.g. tasks 37/38 are disabled this way with the
+    # note "The metabolite NA[c] in this task is conflicting with HumanGEM".
+    content = """\
+\tID\tDESCRIPTION\tIN\tIN LB\tIN UB\tOUT\tOUT LB\tOUT UB
+#\t1\tDisabled task\tNA[c]\t1\t1\tfoo[c]\t1\t1\tconflicts with model
+\t2\tNormal task\tglucose[c]\t1\t1\tATP[c]\t1\t1
+"""
+    path = _write(tmp_path, "tasks.tsv", content)
+    tasks = parse_task_file(path)
+    assert [t.id for t in tasks] == ["2"]
+
+
+def test_hash_prefixed_row_continuation_rows_also_skipped(tmp_path):
+    content = """\
+\tID\tDESCRIPTION\tIN\tIN LB\tIN UB\tOUT\tOUT LB\tOUT UB
+#\t1\tDisabled task\tNA[c]\t1\t1\tfoo[c]\t1\t1
+\t\t\tO2[c]\t1\t1\tCO2[c]\t1\t1
+\t2\tNormal task\tglucose[c]\t1\t1\tATP[c]\t1\t1
+"""
+    path = _write(tmp_path, "tasks.tsv", content)
+    tasks = parse_task_file(path)
+    assert [t.id for t in tasks] == ["2"]
+    assert len(tasks[0].inputs) == 1  # only its own IN, none leaked from the disabled task above
+
+
+def test_hash_marker_ignored_without_a_leading_index_column(tmp_path):
+    # If the file has no leading blank column before ID (offset stays 0),
+    # a literal "#" could only ever land inside a real data cell -- there
+    # is no separate "index" slot for it to disable a row from, so nothing
+    # should be treated as disabled.
+    content = """\
+ID\tDESCRIPTION\tIN\tIN LB\tIN UB\tOUT\tOUT LB\tOUT UB
+1\tTask\tglucose[c]\t1\t1\tATP[c]\t1\t1
+"""
+    path = _write(tmp_path, "tasks.tsv", content)
+    tasks = parse_task_file(path)
+    assert [t.id for t in tasks] == ["1"]
