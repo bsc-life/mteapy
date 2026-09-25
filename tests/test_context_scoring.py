@@ -173,3 +173,29 @@ def test_build_complex_cache_and_score_tasks_matrix(toy_model):
     assert scores.loc["LINEAR", "sample_A"] == 10.0  # min(10, 10) beats R3's 1.0
     assert scores.loc["LINEAR", "sample_B"] == 10.0  # R3 alone scores 10.0
     assert complete.loc["LINEAR", "sample_A"] and complete.loc["LINEAR", "sample_B"]
+
+
+def test_and_linked_paralog_pair_correctly_flags_no_evidence():
+    # Regression test for a real annotation pattern found in Human-GEM
+    # v2.0.1: MAR06914 (cytochrome c oxidase / Complex IV) AND-links COX7B
+    # (ubiquitous, real GTEx min 6.24 TPM, never zero) with its testis-
+    # specific paralog COX7B2 (real GTEx: 0 TPM in 65/68 tissues). Because
+    # the GPR treats both as unconditionally-required fixed subunits rather
+    # than OR-linked alternatives for the same subunit position, the whole
+    # reaction collapses to a score of 0 in nearly every non-testis sample
+    # even though the functional complex (via COX7B alone) is fully present.
+    # This exact shape -- one always-expressed gene AND-linked with a real
+    # but narrowly-restricted paralog -- is what `is_complete` exists to
+    # catch, and it was first found this way, on real data, not the other
+    # way around.
+    gpr_like_complexes = (("COX7B", "COX7B2", "OTHER_SUBUNIT"),)  # single, forced complex
+    non_testis_sample = {"COX7B": 40.0, "COX7B2": 0.0, "OTHER_SUBUNIT": 90.0}
+    testis_sample = {"COX7B": 40.0, "COX7B2": 105.9, "OTHER_SUBUNIT": 90.0}
+
+    non_testis_result = assess_reaction("MAR06914", gpr_like_complexes, non_testis_sample)
+    assert non_testis_result.score == 0.0
+    assert non_testis_result.evidence == ReactionEvidence.NO_EVIDENCE
+
+    testis_result = assess_reaction("MAR06914", gpr_like_complexes, testis_sample)
+    assert testis_result.score == 40.0  # min(40.0, 105.9, 90.0)
+    assert testis_result.evidence == ReactionEvidence.SUPPORTED
