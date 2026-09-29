@@ -22,11 +22,13 @@ Pipeline per (task, sample):
    what `map_gpr` would compute for that reaction alone, while also
    recording *which* complex achieved the max (or why none did -- see
    `ReactionEvidence` below), which `map_gpr` discards entirely.
-3. Aggregate a route's score from its reactions' scores: "min" (the
-   strict weakest-link choice this project's own route-tie analysis
-   validated) or "median" (offered as the more permissive alternative
-   that analysis also tried, but found far too tie-insensitive to trust
-   alone -- not the default).
+3. Aggregate a route's score from its reactions' scores: "min" (default,
+   the strict weakest-link choice this project's own route-tie analysis
+   validated for the CellFie-style expression case), "median" (a more
+   permissive alternative that analysis also tried, but found far too
+   tie-insensitive to trust alone), or "mean" (matches the published
+   TIDE/TIDE-essential methodology this package also implements directly --
+   use this one when comparing against or reproducing TIDE results).
 4. A task's winning route(s) for that sample are whichever are tied for
    the top score. Ties are returned explicitly, never silently broken:
    this project found that a naive `max(dict, key=dict.get)` on tied
@@ -56,7 +58,7 @@ from cobra.core import Model
 
 from mteapy.complexes import get_enzymes
 
-_SUPPORTED_AGGREGATIONS = ("min", "median")
+_SUPPORTED_AGGREGATIONS = ("min", "median", "mean")
 
 Complex = tuple[str, ...]
 
@@ -84,19 +86,40 @@ class ReactionEvidence(Enum):
     score: the cleanest possible case."""
 
 
-def tied_argmax(scores: dict, rel_tol: float = 1e-9, abs_tol: float = 1e-9) -> tuple:
+_SUPPORTED_OR_FUNCS = ("max", "absmax")
+
+
+def tied_argmax(scores: dict, rel_tol: float = 1e-9, abs_tol: float = 1e-9, or_func: str = "max") -> tuple:
     """All keys tied for the max value in `scores`, within floating tolerance.
 
     Returns an empty tuple for an empty `scores`, a single-element tuple for
     a clear winner, and a multi-element tuple when several keys are
     genuinely tied -- callers must not just take `[0]` and assume it means
     anything on its own; check `len(...)` first.
+
+    `or_func` picks how "max" is judged: "max" (default) compares raw
+    values, correct for non-negative signals like expression, where 0 is
+    the floor and bigger is always more support. "absmax" compares by
+    magnitude instead (`abs(v)`), needed for a signal that can be negative
+    (e.g. a log-fold-change, TIDE-style) -- a strongly *down*-regulated
+    complex has to be able to win an OR just as much as a strongly
+    up-regulated one would, which plain "max" would blind by always
+    preferring the least-negative value. This mirrors the `or_func`
+    convention `mteapy.utils.map_gpr`/TIDE already use, just made
+    tie-aware: `absmax` there silently returns one winner via
+    `np.argmax`, which is exactly the kind of hidden tie-breaking this
+    project's own `tied_argmax` exists to avoid.
     """
     if not scores:
         return ()
-    max_val = max(scores.values())
-    return tuple(sorted((k for k, v in scores.items() if math.isclose(v, max_val, rel_tol=rel_tol, abs_tol=abs_tol)),
-                         key=lambda c: c))
+    if or_func not in _SUPPORTED_OR_FUNCS:
+        raise ValueError(f"Unsupported or_func {or_func!r}; use one of {_SUPPORTED_OR_FUNCS}")
+    key = abs if or_func == "absmax" else (lambda v: v)
+    max_key_val = max(key(v) for v in scores.values())
+    return tuple(sorted(
+        (k for k, v in scores.items() if math.isclose(key(v), max_key_val, rel_tol=rel_tol, abs_tol=abs_tol)),
+        key=lambda c: c,
+    ))
 
 
 def build_complex_cache(model: Model, reaction_ids) -> dict[str, tuple[Complex, ...]]:
@@ -133,18 +156,30 @@ class ReactionAssessment:
     evidence: ReactionEvidence = ReactionEvidence.NO_GPR
 
 
-def assess_reaction(reaction_id: str, complexes: tuple[Complex, ...], gene_dict: dict[str, float]) -> ReactionAssessment:
-    """Score one reaction's candidate complexes against `gene_dict` and classify the result."""
+def assess_reaction(reaction_id: str, complexes: tuple[Complex, ...], gene_dict: dict[str, float],
+                     or_func: str = "max") -> ReactionAssessment:
+    """Score one reaction's candidate complexes against `gene_dict` and classify the result.
+
+    AND (a complex's own genes) is always `min` of the raw values,
+    regardless of `or_func` -- that combination rule is meaningful whether
+    `gene_dict` holds non-negative expression or signed log-fold-change
+    values, so it never needs to change. `or_func` (see `tied_argmax`)
+    only affects OR, i.e. which candidate complex counts as "the" winner
+    among a reaction's alternatives: "max" (default) for expression-like
+    signals, "absmax" for a signal that can be negative.
+    """
+    if or_func not in _SUPPORTED_OR_FUNCS:
+        raise ValueError(f"Unsupported or_func {or_func!r}; use one of {_SUPPORTED_OR_FUNCS}")
     if not complexes:
         return ReactionAssessment(reaction_id, 0.0, {}, (), ReactionEvidence.NO_GPR)
 
     complex_scores = {c: min(gene_dict.get(g, 0.0) for g in c) for c in complexes}
-    score = max(complex_scores.values())
+    score = max(complex_scores.values(), key=abs) if or_func == "absmax" else max(complex_scores.values())
 
     if score == 0.0:
         return ReactionAssessment(reaction_id, 0.0, complex_scores, (), ReactionEvidence.NO_EVIDENCE)
 
-    winners = tied_argmax(complex_scores)
+    winners = tied_argmax(complex_scores, or_func=or_func)
     evidence = ReactionEvidence.SUPPORTED if len(winners) == 1 else ReactionEvidence.AMBIGUOUS
     return ReactionAssessment(reaction_id, score, complex_scores, winners, evidence)
 
@@ -156,6 +191,8 @@ def _aggregate(values: list[float], aggregation: str) -> float:
         return min(values)
     if aggregation == "median":
         return statistics.median(values)
+    if aggregation == "mean":
+        return statistics.mean(values)
     raise ValueError(f"Unsupported aggregation {aggregation!r}; use one of {_SUPPORTED_AGGREGATIONS}")
 
 
@@ -233,6 +270,7 @@ def score_task(
     gene_dict: dict[str, float],
     aggregation: str = "min",
     task_id: str = "",
+    or_func: str = "max",
 ) -> TaskActivityReport:
     """Score every candidate route of one task against one sample's expression.
 
@@ -248,13 +286,26 @@ def score_task(
         `{reaction_id: candidate_complexes}`, from `build_complex_cache`.
         Must cover every reaction appearing in `task_routes`.
     gene_dict:
-        One sample's gene expression, `{gene_id: value}`.
+        One sample's signal, `{gene_id: value}` -- non-negative expression
+        (CellFie-style; use `or_func="max"`) or signed log-fold-change
+        (TIDE-style; use `or_func="absmax"`).
     aggregation:
-        How a route's reaction scores combine into one route score:
-        "min" (default, strict weakest-link) or "median" (permissive).
+        How a route's reaction scores combine into one route score: "min"
+        (default, strict weakest-link -- this project's own route-tie
+        analysis validated this over "median" for the CellFie-style
+        expression case, `or_func="max"`), "median" (permissive), or "mean"
+        (matches the published TIDE/TIDE-essential methodology this
+        package also implements directly -- see `mteapy.tide`'s
+        `calculate_TIDE_scores`/`calculate_TIDEe_scores` -- so use "mean"
+        when comparing against or reproducing TIDE results with
+        `or_func="absmax"`, rather than carrying the expression-case "min"
+        default over to the differential-expression case unexamined).
     task_id:
         Carried through to the result only for the caller's convenience
         (e.g. building a results table); not used in scoring.
+    or_func:
+        Passed through to `assess_reaction`/`tied_argmax`: "max" (default)
+        for a non-negative signal, "absmax" for one that can be negative.
     """
     if aggregation not in _SUPPORTED_AGGREGATIONS:
         raise ValueError(f"Unsupported aggregation {aggregation!r}; use one of {_SUPPORTED_AGGREGATIONS}")
@@ -262,13 +313,13 @@ def score_task(
     route_reports: dict[int, RouteReport] = {}
     for route_id, reactions in task_routes.items():
         assessments = {
-            rid: assess_reaction(rid, complex_cache.get(rid, ()), gene_dict)
+            rid: assess_reaction(rid, complex_cache.get(rid, ()), gene_dict, or_func=or_func)
             for rid in reactions
         }
         agg_score = _aggregate([a.score for a in assessments.values()], aggregation)
         route_reports[route_id] = RouteReport(route_id, agg_score, aggregation, assessments)
 
-    winning_route_ids = tied_argmax({rid: r.score for rid, r in route_reports.items()})
+    winning_route_ids = tied_argmax({rid: r.score for rid, r in route_reports.items()}, or_func=or_func)
     final_score = route_reports[winning_route_ids[0]].score if winning_route_ids else 0.0
 
     return TaskActivityReport(
@@ -284,6 +335,7 @@ def score_tasks_matrix(
     model: Model,
     expr_df: pd.DataFrame,
     aggregation: str = "min",
+    or_func: str = "max",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Score every task in `tasks_routes` against every sample (column) in `expr_df`.
 
@@ -307,7 +359,11 @@ def score_tasks_matrix(
     expr_df:
         Gene expression, genes (index) x samples (columns).
     aggregation:
-        Passed through to `score_task` ("min" or "median").
+        Passed through to `score_task` ("min", "median", or "mean").
+    or_func:
+        Passed through to `score_task`: "max" (default, for a non-negative
+        signal like expression) or "absmax" (for a signal that can be
+        negative, like a log-fold-change).
     """
     all_reactions = sorted({r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
     complex_cache = build_complex_cache(model, all_reactions)
@@ -318,7 +374,7 @@ def score_tasks_matrix(
         score_row, complete_row = {}, {}
         for sample in expr_df.columns:
             gene_dict = expr_df[sample].to_dict()
-            report = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id)
+            report = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func)
             score_row[sample] = report.score
             complete_row[sample] = report.is_complete
         score_rows[task_id] = score_row

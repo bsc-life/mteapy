@@ -22,6 +22,24 @@ def test_tied_argmax(scores, expected):
     assert tied_argmax(scores) == expected
 
 
+@pytest.mark.parametrize("scores,expected", [
+    # Plain "max" would pick B (least negative); "absmax" correctly treats
+    # A's strong down-regulation as the dominant signal, same as it would
+    # for an equally strong up-regulation.
+    ({"A": -2.0, "B": 0.1}, ("A",)),
+    ({"A": -2.0, "B": 2.0}, ("A", "B")),  # tied by magnitude despite opposite sign
+    ({"A": -2.0, "B": -2.0 + 1e-12}, ("A", "B")),  # tied within tolerance
+    ({}, ()),
+])
+def test_tied_argmax_absmax_compares_by_magnitude_not_raw_value(scores, expected):
+    assert tied_argmax(scores, or_func="absmax") == expected
+
+
+def test_tied_argmax_rejects_unknown_or_func():
+    with pytest.raises(ValueError, match="or_func"):
+        tied_argmax({"A": 1.0}, or_func="nonsense")
+
+
 def test_assess_reaction_and_within_complex_or_across_complexes():
     # (A and B) or (C) -- AND takes the min within a complex, OR takes the
     # max across complexes; C alone should win here since it's unopposed.
@@ -68,6 +86,86 @@ def test_assess_reaction_ambiguous_winner_among_real_evidence():
     assert set(result.winning_complexes) == {("A",), ("B",)}
 
 
+def test_assess_reaction_absmax_lets_a_downregulated_complex_win():
+    # TIDE-style signed log-fold-change signal: complex A is strongly
+    # down-regulated (-3.0), complex B barely up (0.2). Under plain "max"
+    # B would (wrongly, for a signed signal) look like "the" winner; under
+    # "absmax" A correctly dominates since it deviates from 0 the most.
+    complexes = (("A",), ("B",))
+    gene_dict = {"A": -3.0, "B": 0.2}
+
+    default = assess_reaction("R1", complexes, gene_dict)
+    assert default.score == 0.2
+    assert default.winning_complexes == (("B",),)
+
+    absmax_result = assess_reaction("R1", complexes, gene_dict, or_func="absmax")
+    assert absmax_result.score == -3.0
+    assert absmax_result.winning_complexes == (("A",),)
+    assert absmax_result.evidence == ReactionEvidence.SUPPORTED
+
+
+def test_assess_reaction_and_is_unaffected_by_or_func():
+    # AND (min of the raw signed values within one complex) never changes
+    # with or_func -- only OR (across complexes) does.
+    complexes = (("A", "B"),)
+    gene_dict = {"A": -1.0, "B": -5.0}
+    default = assess_reaction("R1", complexes, gene_dict)
+    absmax_result = assess_reaction("R1", complexes, gene_dict, or_func="absmax")
+    assert default.score == absmax_result.score == -5.0
+
+
+def test_assess_reaction_rejects_unknown_or_func():
+    with pytest.raises(ValueError, match="or_func"):
+        assess_reaction("R1", (("A",),), {"A": 1.0}, or_func="nonsense")
+
+
+def test_or_func_absmax_reproduces_published_tide_scores_exactly():
+    """Regression test against real, published TIDE output: the AGS-paper
+    dataset (Benedicto et al., https://doi.org/10.1038/s41540-025-00586-y,
+    data/code at github.com/bsc-life/ags-paper), condition TAKi, masked
+    log2FoldChange (non-significant by padj >= 0.05 zeroed), scored against
+    two real single-reaction Human-GEM tasks from the paper's own
+    task_structure_matrix.tsv (X76: a single-gene GPR; X142: a real 2-gene
+    OR). Both reproduce the paper's published TIDE task score to full
+    floating-point precision -- verified by hand against
+    ags-paper/results/TIDE/ags-tide-TAKi.tsv, not re-derived here (this
+    package doesn't ship that data), which is exactly why the raw numbers
+    below are hardcoded rather than read from a file.
+    """
+    # X76 "Conversion of asparate to asparagine" -> MAR03903, GPR is a lone
+    # gene (ENSG00000070669), masked LFC -1.7410477269287123.
+    gene_dict_x76 = {"ENSG00000070669": -1.7410477269287123}
+    result = assess_reaction("MAR03903", (("ENSG00000070669",),), gene_dict_x76, or_func="absmax")
+    assert result.score == pytest.approx(-1.7410477269287123, rel=0, abs=1e-12)
+    assert result.evidence == ReactionEvidence.SUPPORTED
+
+    # X142 "Glycerol-3-phosphate synthesis" -> MAR00479, GPR is
+    # "ENSG00000152642 or ENSG00000167588"; the first gene was masked to 0
+    # (non-significant), the second carries the real signal -- absmax must
+    # pick the real one, not silently default to the first/only-max value.
+    complexes = (("ENSG00000152642",), ("ENSG00000167588",))
+    gene_dict_x142 = {"ENSG00000152642": 0.0, "ENSG00000167588": -0.8500990237008653}
+    result = assess_reaction("MAR00479", complexes, gene_dict_x142, or_func="absmax")
+    assert result.score == pytest.approx(-0.8500990237008653, rel=0, abs=1e-12)
+    assert result.winning_complexes == (("ENSG00000167588",),)
+
+
+def test_score_task_absmax_picks_the_most_differentially_regulated_route():
+    # Route 1's reaction is mildly up (+0.1); route 2's is strongly down
+    # (-4.0). A signed (LFC-style) signal should let route 2 win under
+    # "absmax" even though its raw score is lower than route 1's.
+    complex_cache = {"R1": (("g1",),), "R2": (("g2",),)}
+    task_routes = {1: frozenset({"R1"}), 2: frozenset({"R2"})}
+    gene_dict = {"g1": 0.1, "g2": -4.0}
+
+    default = score_task(task_routes, complex_cache, gene_dict, task_id="T")
+    assert default.winning_route_ids == (1,)  # plain max: 0.1 > -4.0
+
+    absmax_report = score_task(task_routes, complex_cache, gene_dict, task_id="T", or_func="absmax")
+    assert absmax_report.winning_route_ids == (2,)
+    assert absmax_report.score == -4.0
+
+
 def test_score_task_single_route_is_never_tied_and_is_complete():
     complex_cache = {"R1": (("g1",),), "R2": (("g2",),)}
     task_routes = {1: frozenset({"R1", "R2"})}
@@ -111,7 +209,30 @@ def test_score_task_min_vs_median_can_change_the_winner():
 def test_score_task_unsupported_aggregation_raises():
     complex_cache = {"R1": (("g1",),)}
     with pytest.raises(ValueError):
-        score_task({1: frozenset({"R1"})}, complex_cache, {"g1": 1.0}, aggregation="mean")
+        score_task({1: frozenset({"R1"})}, complex_cache, {"g1": 1.0}, aggregation="mode")
+
+
+def test_score_task_mean_aggregation_matches_published_tide_methodology():
+    """mteapy.tide's own calculate_TIDE_scores/calculate_TIDEe_scores
+    (the published TIDE/TIDE-essential implementation this package also
+    ships) aggregate a task's reaction/gene scores with plain `np.mean`,
+    never "min" or "median" -- "mean" here exists specifically to
+    reproduce/compare against that established methodology, not as a third
+    arbitrary option. This is a straightforward statistics.mean, but the
+    result differs from both "min" and "median" for an asymmetric route,
+    which is the property that matters here."""
+    complex_cache = {"R1": (("g1",),), "R2": (("g2",),)}
+    task_routes = {1: frozenset({"R1", "R2"})}
+    gene_dict = {"g1": 1.0, "g2": 5.0}
+
+    report = score_task(task_routes, complex_cache, gene_dict, aggregation="mean")
+    assert report.score == pytest.approx(3.0)  # mean(1.0, 5.0), not min=1.0 or median=3.0 (coincide here)
+
+    complex_cache2 = {"R1": (("g1",),), "R2": (("g2",),), "R3": (("g3",),)}
+    task_routes2 = {1: frozenset({"R1", "R2", "R3"})}
+    gene_dict2 = {"g1": 1.0, "g2": 2.0, "g3": 9.0}
+    report2 = score_task(task_routes2, complex_cache2, gene_dict2, aggregation="mean")
+    assert report2.score == pytest.approx(4.0)  # mean(1,2,9)=4.0, distinct from median=2.0 and min=1.0
 
 
 def test_score_task_reports_partial_when_winning_route_has_no_evidence_reaction():
