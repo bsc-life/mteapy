@@ -3,5 +3,7 @@ pandas
 cobra=>0.25.0
 argparse
 rich_argparse
-boolean.py
+# Not yet on PyPI -- private repo, requires SSH access. Once published,
+# this line can go back to a bare "cobra-netgraph".
+cobra-netgraph @ git+ssh://git@github.com/migp11/cobra-netgraph.git
 pytest
