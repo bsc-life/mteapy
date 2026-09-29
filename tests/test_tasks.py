@@ -3,7 +3,54 @@ import textwrap
 
 import pytest
 
-from mteapy.tasks import TaskParseError, parse_task_file
+from mteapy.tasks import (
+    BoundedMetabolite,
+    ChangedBound,
+    EquationConstraint,
+    MetabolicTask,
+    TaskParseError,
+    parse_task_file,
+    task_definition_hash,
+)
+
+
+def _task(**overrides):
+    defaults = dict(id="T1", description="a task", inputs=[], outputs=[], equations=[], changed_bounds=[])
+    defaults.update(overrides)
+    return MetabolicTask(**defaults)
+
+
+def test_task_definition_hash_ignores_cosmetic_fields():
+    a = _task(description="original description")
+    b = _task(description="a totally different description", comments="also different")
+    assert task_definition_hash(a) == task_definition_hash(b)
+
+
+def test_task_definition_hash_changes_with_inputs():
+    a = _task(inputs=[BoundedMetabolite("glucose[e]", 0, 1000)])
+    b = _task(inputs=[BoundedMetabolite("glucose[e]", 0, 500)])  # different upper bound
+    assert task_definition_hash(a) != task_definition_hash(b)
+
+
+def test_task_definition_hash_changes_with_outputs_equations_and_changed_bounds():
+    base = _task()
+    with_output = _task(outputs=[BoundedMetabolite("CO2[e]", 0, 1000)])
+    with_equation = _task(equations=[EquationConstraint("A[c] => B[c]", 0, 1000)])
+    with_changed_bound = _task(changed_bounds=[ChangedBound("MAR00001", 0, 500)])
+
+    hashes = {task_definition_hash(t) for t in (base, with_output, with_equation, with_changed_bound)}
+    assert len(hashes) == 4  # all four are genuinely distinct
+
+
+def test_task_definition_hash_is_order_independent_within_a_list():
+    a = _task(inputs=[BoundedMetabolite("A[c]", 0, 1), BoundedMetabolite("B[c]", 0, 1)])
+    b = _task(inputs=[BoundedMetabolite("B[c]", 0, 1), BoundedMetabolite("A[c]", 0, 1)])
+    # json.dumps(sort_keys=True) only sorts dict keys, not list order -- this
+    # documents that IN/OUT order currently DOES matter to the hash (a
+    # reordering-only edit to a task file would count as "changed"), which
+    # is a conservative, safe default: it can only cause an unnecessary
+    # re-enumeration, never a silently-stale resume.
+    assert task_definition_hash(a) != task_definition_hash(b)
 
 
 def _write(tmp_path, name, content):

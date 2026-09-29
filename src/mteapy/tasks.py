@@ -42,6 +42,8 @@ Any other column present in the file is kept verbatim in
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -112,6 +114,35 @@ class MetabolicTask:
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         return f"MetabolicTask(id={self.id!r}, description={self.description!r})"
+
+
+def task_definition_hash(task: MetabolicTask) -> str:
+    """A stable hash of everything about `task` that affects the model
+    `mteapy.task_model.build_task_model` translates it into: its IN/OUT
+    boundary metabolites, EQU constraints, and CHANGED RXN overrides.
+
+    Deliberately excludes `description`/`comments`/`system`/`subsystem`/
+    `annotations`/`print_flux` -- cosmetic fields that don't change what
+    the task actually constrains, so fixing a typo in a description isn't
+    "a changed task."
+
+    Used to guard route-enumeration resume: before seeding a MILP with
+    cuts from a task's previously-found routes (see
+    `mteapy.enumeration.iter_alternate_routes`'s `seed_routes`), a caller
+    should confirm the task's own definition hasn't drifted since those
+    routes were found -- an edited task list is exactly the situation
+    this project has hit before (see the Human-GEM curation-fix work), and
+    seeding cuts from a stale definition would silently produce wrong
+    results with no error.
+    """
+    payload = {
+        "inputs": [[bm.metabolite, bm.lower_bound, bm.upper_bound] for bm in task.inputs],
+        "outputs": [[bm.metabolite, bm.lower_bound, bm.upper_bound] for bm in task.outputs],
+        "equations": [[e.equation, e.lower_bound, e.upper_bound] for e in task.equations],
+        "changed_bounds": [[c.reaction_id, c.lower_bound, c.upper_bound] for c in task.changed_bounds],
+    }
+    blob = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
 
 
 def _to_bool(value: str) -> bool:
