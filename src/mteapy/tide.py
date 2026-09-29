@@ -87,7 +87,7 @@ def calculate_random_TIDEe_scores(
         if random_seed is not None:
             seeds = [random_seed + i for i in range(n_permutations)]
         else:
-            seeds = [np.random.random_integers(0,1e6) for _ in range(n_permutations)]
+            seeds = [np.random.randint(0, 1_000_000) for _ in range(n_permutations)]
         
         # Argument list for parallel processing
         arguments = [(genes, lfc_vector, task_to_gene, seeds[i], "TIDE-essential") \
@@ -265,7 +265,7 @@ def calculate_random_TIDE_scores(
         if random_seed is not None:
             seeds = [random_seed + i for i in range(n_permutations)]
         else:
-            seeds = [np.random.random_integers(0,1e6) for _ in range(n_permutations)]
+            seeds = [np.random.randint(0, 1_000_000) for _ in range(n_permutations)]
         
         # Argument list for parallel processing
         arguments = [(genes, lfc_vector, task_structure, gpr_string_dict, seeds[i], or_func, "TIDE") \

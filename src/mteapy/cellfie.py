@@ -64,8 +64,9 @@ def calculate_GAL(
     to_keep = expr_data_array != 0
     linear_data = expr_data_array[to_keep]
     
-    gene_scores = np.zeros((len(expr_data.index), len(expr_data.columns)))
-    
+    if thresh_type not in ("local", "global"):
+        raise ValueError(f"Unsupported thresh_type ({thresh_type}). Please, use 'local' or 'global'.")
+
     # Local approach
     if thresh_type == "local":
         if local_thresh_type == "mean":

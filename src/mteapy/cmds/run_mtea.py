@@ -28,7 +28,7 @@ def main() -> None:
         print(f"{bc.CYAN}Cite TIDE:{bc.ENDC}\thttps://doi.org/10.1016/j.celrep.2021.108836")
         print(f"{bc.CYAN}Cite TIDE-e:{bc.ENDC}\thttps://doi.org/10.1101/2025.05.08.652850")
         print(f"{bc.CYAN}Cite CellFie:{bc.ENDC}\thttps://doi.org/10.1016/j.crmeth.2021.100040\n")
-        exit(1)
+        exit(0)
         
     
     ###########################################
@@ -41,19 +41,19 @@ def main() -> None:
 
         # File and dir status check
         if not os.path.isfile(args.dea_file):
-            print(f"{bc.FAIL}ERROR: File {args.dea_file} could not be found.{bc.FAIL}\n")
+            print(f"{bc.FAIL}ERROR: File {args.dea_file} could not be found.{bc.ENDC}\n")
             exit(1)
 
         # Out file handling
-        if os.path.isfile(args.out_filename):
-            print(f"File {args.out_filename} already exists, will be overwritten.")
-        elif not os.path.isdir(os.path.dirname(args.out_filename)) and os.path.dirname(args.out_filename) != "":
-            print(f"Creating out directory {os.path.dirname(args.out_filename)}")
-            os.mkdir(os.path.dirname(args.out_filename))
         if os.path.isdir(args.out_filename):
-            args.out_filename += "tide-results.tsv"
+            args.out_filename = os.path.join(args.out_filename, "tide-results.tsv")
             print(f"Results will be saved into {args.out_filename}")
         else:
+            if os.path.isfile(args.out_filename):
+                print(f"File {args.out_filename} already exists, will be overwritten.")
+            elif os.path.dirname(args.out_filename) != "" and not os.path.isdir(os.path.dirname(args.out_filename)):
+                print(f"Creating out directory {os.path.dirname(args.out_filename)}")
+                os.makedirs(os.path.dirname(args.out_filename))
             print(f"Results will be saved into {args.out_filename}.")
     
         # Reading in data, model and task structure
@@ -77,7 +77,8 @@ def main() -> None:
             exit(1)
         if not check_ensemblid(expr_data_df[args.gene_col].values):
             print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
-        
+            exit(1)
+
         # Loading in metabolic model
         print("Loading metabolic model", end=" ")
         model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM.xml.gz"))

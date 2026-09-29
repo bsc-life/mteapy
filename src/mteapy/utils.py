@@ -80,8 +80,9 @@ def add_task_metadata(results_df:pd.DataFrame, task_metadata_df:pd.DataFrame):
     task_metadata_df["metabolic_subsystem"] = [system.title() for system in task_metadata_df["metabolic_subsystem"]]
     
     results_df = results_df.merge(
-        task_metadata_df[["task_id","task_description","metabolic_system","metabolic_subsystem"]], 
-        on="task_id"
+        task_metadata_df[["task_id","task_description","metabolic_system","metabolic_subsystem"]],
+        on="task_id",
+        how="left"
     )
     return results_df
 

@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 from cobra.core.gene import GPR
-from mteapy.utils import mask_lfc_values, absmax, map_gpr, map_gpr_w_names, calculate_pvalue
+from mteapy.utils import mask_lfc_values, absmax, map_gpr, map_gpr_w_names, calculate_pvalue, add_task_metadata
 
 
 def test_mask_lfc_values():
@@ -55,3 +55,18 @@ def test_map_gpr_w_names(input, expected):
 def test_calculate_pvalue(input, expected):
     score, array = input
     assert calculate_pvalue(score, array) == expected
+
+
+def test_add_task_metadata_keeps_result_rows_without_matching_metadata():
+    results_df = pd.DataFrame({"task_id": ["1", "2"], "score": [0.1, 0.2]})
+    task_metadata_df = pd.DataFrame({
+        "ID": ["1"],
+        "SYSTEM": ["amino acid metabolism"],
+        "DESCRIPTION": ["some task"],
+        "SUBSYSTEM": ["some subsystem"],
+    })
+
+    annotated_df = add_task_metadata(results_df, task_metadata_df)
+
+    assert list(annotated_df["task_id"]) == ["1", "2"]
+    assert annotated_df.loc[annotated_df["task_id"] == "2", "task_description"].isna().all()
