@@ -189,32 +189,52 @@ def map_gpr(expr:GPR, gene_dict:dict, or_func:str = "absmax"):
 
 def map_gpr_w_names(expr:GPR, conf_genes:dict):
     """
-    Internal function to evaluate a gene-protein rule in an injection-safe manner (hopefully).
+    Recursive function to parse a GPR rule for CellFie's RAL computation,
+    returning (score, gene_used). `score` is None for "no data" -- a gene
+    absent from `conf_genes` -- matching the original MATLAB CellFie's `-1`
+    sentinel (`findUsedGenesLevels_all.m`/`selectGeneFromGPR_all.m`): a
+    missing gene still participates in AND/OR via that sentinel rather than
+    being silently dropped as if the rule never mentioned it. AND (a
+    complex's subunits) propagates None if *any* subunit is missing -- you
+    can't confirm a complex is active without knowing all of it, matching
+    `min` naturally sorting a sentinel-below-every-real-value first in the
+    original. OR (isoenzymes) recovers past a missing option as long as
+    another one has data, matching `max` ignoring it.
+
+    Callers (`calculate_RAL`) must treat a None score as "no data for this
+    reaction/sample", to be excluded from downstream aggregation --
+    substituting a plain 0 instead would silently pull scores toward zero
+    for any reaction with an unmeasured gene, which is not what CellFie's
+    published algorithm does.
     """
     if isinstance(expr, (Expression, GPR)):
         return map_gpr_w_names(expr.body, conf_genes)
-    
+
     elif isinstance(expr, Name):
         fgid = re.sub(r"\.\d*", "", expr.id)      # Removes "." notation from genes
-        return conf_genes.get(fgid, 0), fgid
-    
+        if fgid in conf_genes:
+            return conf_genes[fgid], fgid
+        return None, fgid
+
     elif isinstance(expr, BoolOp):
         op = expr.op
         evaluated_values = [map_gpr_w_names(i, conf_genes) for i in expr.values]
-        filtered_values = [(value, gene) for value, gene in evaluated_values if gene in conf_genes]
-        # Return default values if no valid genes found
-        if len(filtered_values) == 0:
-            return 0, "0" 
         if isinstance(op, Or):
-            return max(filtered_values, key=lambda x: x[0])
+            real_values = [(value, gene) for value, gene in evaluated_values if value is not None]
+            if not real_values:
+                return None, evaluated_values[0][1]
+            return max(real_values, key=lambda x: x[0])
         elif isinstance(op, And):
-            return min(filtered_values, key=lambda x: x[0])
+            missing = [(value, gene) for value, gene in evaluated_values if value is None]
+            if missing:
+                return None, missing[0][1]
+            return min(evaluated_values, key=lambda x: x[0])
         else:
             raise TypeError("unsupported operation " + op.__class__.__name__)
-    
+
     elif expr is None:
-        return 0, "0"
-    
+        return None, "0"
+
     else:
         raise TypeError("unsupported operation " + repr(expr))
 

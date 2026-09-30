@@ -47,6 +47,38 @@ def test_map_gpr_w_names(input, expected):
     assert map_gpr_w_names(GPR.from_string(expr), gene_dict) == expected
 
 
+def test_map_gpr_w_names_and_clause_with_one_missing_gene_has_no_data():
+    # A complex needs every subunit measured to be assessed at all --
+    # matching the original MATLAB CellFie's -1-sentinel-propagates-
+    # through-AND semantics (a partial complex assessment using only the
+    # measured subunit would be more lenient than the published algorithm).
+    score, gene = map_gpr_w_names(GPR.from_string("A and B"), {"A": 5.0})
+    assert score is None
+    assert gene == "B"
+
+
+def test_map_gpr_w_names_or_clause_recovers_past_one_missing_gene():
+    # An isoenzyme option missing data doesn't sink the whole OR as long as
+    # another option has real data -- max naturally skips it.
+    score, gene = map_gpr_w_names(GPR.from_string("A or B"), {"B": 5.0})
+    assert (score, gene) == (5.0, "B")
+
+
+def test_map_gpr_w_names_or_clause_all_missing_has_no_data():
+    score, gene = map_gpr_w_names(GPR.from_string("A or B"), {})
+    assert score is None
+
+
+def test_map_gpr_w_names_single_missing_gene_has_no_data():
+    score, gene = map_gpr_w_names(GPR.from_string("A"), {})
+    assert score is None
+    assert gene == "A"
+
+
+def test_map_gpr_w_names_none_gpr_has_no_data():
+    assert map_gpr_w_names(None, {"A": 5.0}) == (None, "0")
+
+
 @pytest.mark.parametrize("input,expected", [
     ((0, np.array([0, 0, 0, 0, 0])), 1.0),
     ((0, np.array([0, 1, 0, 0, 0])), 0.8),
