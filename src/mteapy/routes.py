@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     definition_hash TEXT,
     PRIMARY KEY (source, task_id)
 );
+CREATE TABLE IF NOT EXISTS task_sources (
+    source TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    origin_repo TEXT,
+    origin_ref TEXT,
+    recorded_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS enumeration_runs (
     source TEXT NOT NULL,
     task_id TEXT NOT NULL,
@@ -96,6 +104,12 @@ def model_file_sha256(path: str) -> str:
         return hashlib.sha256(fh.read()).hexdigest()
 
 
+def task_source_sha256(path: str) -> str:
+    """Hash a task-list file's raw bytes, for `register_task_source`'s provenance record."""
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
 def connect(path: str) -> sqlite3.Connection:
     """Open (creating if needed) a routes database at `path` with the schema applied."""
     conn = sqlite3.connect(path)
@@ -131,6 +145,60 @@ def register_model(
     )
     conn.commit()
     return cur.lastrowid
+
+
+def register_task_source(
+    conn: sqlite3.Connection,
+    source: str,
+    file_path: str,
+    sha256: str,
+    origin_repo: str | None = None,
+    origin_ref: str | None = None,
+) -> bool:
+    """Record (or update) provenance for the task-list file a `source` was
+    enumerated from: which file, its content hash, and (when known) the
+    repo/ref it came from -- the same content-addressed philosophy
+    `register_model` already applies to the model file, extended to the
+    task list.
+
+    This complements, rather than replaces, `tasks.definition_hash`:
+    `definition_hash` catches drift in one specific task's own definition,
+    while this table records the identity of the whole file a `source`'s
+    tasks were read from in the first place -- there was previously no
+    record anywhere of which file (or version of it) a `source` label like
+    "cellfie_consensus" actually corresponds to.
+
+    Returns True if a task-list file was already recorded for this `source`
+    under a *different* sha256 -- i.e. the file has since changed. Callers
+    re-enumerating a `source` may want to warn on that, since it means
+    routes already in the database were computed from a task list that no
+    longer matches what's on disk.
+    """
+    row = conn.execute("SELECT sha256 FROM task_sources WHERE source = ?", (source,)).fetchone()
+    changed = row is not None and row[0] != sha256
+    conn.execute(
+        "INSERT INTO task_sources (source, file_path, sha256, origin_repo, origin_ref, recorded_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (source) DO UPDATE SET "
+        "file_path = excluded.file_path, sha256 = excluded.sha256, "
+        "origin_repo = excluded.origin_repo, origin_ref = excluded.origin_ref, "
+        "recorded_at = excluded.recorded_at",
+        (source, file_path, sha256, origin_repo, origin_ref, _now()),
+    )
+    conn.commit()
+    return changed
+
+
+def get_task_source(conn: sqlite3.Connection, source: str) -> dict | None:
+    """The recorded task-list provenance for `source`, or None if never registered."""
+    row = conn.execute(
+        "SELECT source, file_path, sha256, origin_repo, origin_ref, recorded_at "
+        "FROM task_sources WHERE source = ?",
+        (source,),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(["source", "file_path", "sha256", "origin_repo", "origin_ref", "recorded_at"], row))
 
 
 def register_task(

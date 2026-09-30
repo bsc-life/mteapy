@@ -2,6 +2,7 @@ from mteapy.routes import (
     connect,
     get_enumeration_status,
     get_task_definition_hash,
+    get_task_source,
     list_tasks,
     load_multiroute_tasks,
     load_route_fluxes,
@@ -10,6 +11,7 @@ from mteapy.routes import (
     record_enumeration_result,
     register_model,
     register_task,
+    register_task_source,
     reset_source,
     save_route_fluxes,
 )
@@ -27,6 +29,41 @@ def test_register_model_is_idempotent_by_content_hash():
 
     other = register_model(conn, "model.xml", sha256="def456", n_reactions=10, n_genes=5)
     assert other != id1
+
+
+def test_register_task_source_records_provenance_and_reports_no_change_on_first_call():
+    conn = _fresh_db()
+    changed = register_task_source(
+        conn, "cellfie_consensus", "Human-GEM/data/metabolicTasks/metabolicTasks_CellfieConsensus.txt",
+        sha256="abc123", origin_repo="bsc-life/Human-GEM", origin_ref="4f25a6a",
+    )
+    assert changed is False
+
+    record = get_task_source(conn, "cellfie_consensus")
+    assert record["source"] == "cellfie_consensus"
+    assert record["sha256"] == "abc123"
+    assert record["origin_repo"] == "bsc-life/Human-GEM"
+    assert record["origin_ref"] == "4f25a6a"
+
+
+def test_register_task_source_reports_change_when_hash_differs():
+    conn = _fresh_db()
+    register_task_source(conn, "full", "tasks.txt", sha256="original_hash")
+    changed = register_task_source(conn, "full", "tasks.txt", sha256="different_hash")
+    assert changed is True
+    assert get_task_source(conn, "full")["sha256"] == "different_hash"
+
+
+def test_register_task_source_reregistering_same_hash_reports_no_change():
+    conn = _fresh_db()
+    register_task_source(conn, "full", "tasks.txt", sha256="same_hash")
+    changed = register_task_source(conn, "full", "tasks.txt", sha256="same_hash")
+    assert changed is False
+
+
+def test_get_task_source_returns_none_when_never_registered():
+    conn = _fresh_db()
+    assert get_task_source(conn, "unknown_source") is None
 
 
 def test_record_and_load_single_task_routes():
