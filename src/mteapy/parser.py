@@ -183,6 +183,8 @@ def mtea_parser():
 
     CellFie_parser.add_argument("--binary_scores", action="store_true", dest="binary_scores_flag", help="Flag to indicate whether to also return the binary metabolic score matrix as a second result file. See the original publication for more details.")
 
+    CellFie_parser.add_argument("--log_transformed", action="store_true", dest="log_transformed", help="Flag to indicate that the input expression file is already log-transformed. Percentile-based thresholds are then computed directly on the given values; by default (flag unset), thresholds are computed in log10 space and converted back, matching the original CellFie algorithm's assumption that input is raw (linear) expression.")
+
     _add_mapping_strategy_args(CellFie_parser)
 
     return parser

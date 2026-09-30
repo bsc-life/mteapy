@@ -280,6 +280,7 @@ def main() -> None:
                 args.minmaxmean_thresh_type,
                 args.upper_bound, args.lower_bound,
                 args.global_thresh_type, args.global_value,
+                log_transformed=args.log_transformed,
                 mapping_strategy=args.mapping_strategy,
                 tasks_routes=tasks_routes,
             )
