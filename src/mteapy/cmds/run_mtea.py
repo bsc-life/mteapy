@@ -146,6 +146,8 @@ def main() -> None:
             # Main execution
             print("Starting analysis:")
             print(f"\tMapping strategy = {args.mapping_strategy}")
+            if args.mapping_strategy == "context-aware":
+                print(f"\tPermutation strategy = {args.permutation_strategy}")
             print(f"\tNº jobs      = {args.n_cpus}")
             print(f"\tPermutations = {args.n_permutations}")
             print(f"\tOR function  = {args.or_func}")
@@ -177,6 +179,7 @@ def main() -> None:
                 mapping_strategy=args.mapping_strategy,
                 tasks_routes=tasks_routes,
                 complex_cache=complex_cache,
+                permutation_strategy=args.permutation_strategy,
             )
             TIDE_e_results = compute_TIDEe(
                 expr_data_df.set_index(args.gene_col),

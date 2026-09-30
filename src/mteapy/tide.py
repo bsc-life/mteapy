@@ -5,7 +5,7 @@ from multiprocessing import Pool
 from cobra.core import Model
 
 from mteapy.context_scoring import score_task
-from mteapy.utils import map_gpr, calculate_pvalue, MTEA_parallel_worker
+from mteapy.utils import map_gpr, calculate_pvalue, MTEA_parallel_worker, init_MTEA_parallel_worker, parallel_chunksize
 
 
 ###########################################
@@ -89,16 +89,16 @@ def calculate_random_TIDEe_scores(
             seeds = [random_seed + i for i in range(n_permutations)]
         else:
             seeds = [np.random.randint(0, 1_000_000) for _ in range(n_permutations)]
-        
-        # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_to_gene, seeds[i], "TIDE-essential") \
-                     for i in range(n_permutations)]
-        
-        # Parallel execution
-        with Pool(processes=n_cpus) as pool:
-            map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
-            random_scores = np.array([array for array in map_result.get()])
-            
+
+        # Shared read-only state, sent to each worker PROCESS once (via the
+        # Pool initializer) rather than rebuilt into every permutation's own
+        # argument tuple and re-pickled/sent over IPC n_permutations times.
+        state = {"framework": "TIDE-essential", "genes": genes, "lfc_vector": lfc_vector, "task_to_gene": task_to_gene}
+
+        with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
+            map_result = pool.map_async(MTEA_parallel_worker, seeds, chunksize=parallel_chunksize(n_permutations, n_cpus))
+            random_scores = np.array(list(map_result.get()))
+
     return pd.DataFrame(random_scores, columns=gene_essentiality.columns)
 
 
@@ -259,24 +259,26 @@ def calculate_random_TIDE_scores(
                                       for rxn in task_structure.index]
 
     else:
-        # Convert GPR objects to strings for serialization
+        # Convert GPR objects to strings for serialization -- the Pool
+        # initializer reconstructs real GPR objects from this once per
+        # worker process, not once per permutation.
         gpr_string_dict = {rxn_id: str(gpr) if gpr else None for rxn_id, gpr in gpr_dict.items()}
-        
+
         # Generate deterministic seeds for parallel processing
         if random_seed is not None:
             seeds = [random_seed + i for i in range(n_permutations)]
         else:
             seeds = [np.random.randint(0, 1_000_000) for _ in range(n_permutations)]
-        
-        # Argument list for parallel processing
-        arguments = [(genes, lfc_vector, task_structure, gpr_string_dict, seeds[i], or_func, "TIDE") \
-                    for i in range(n_permutations)]
-        
-        # Parallel execution
-        with Pool(processes=n_cpus) as pool:
-            map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
-            random_projection = np.array([array for array in map_result.get()])
-    
+
+        state = {
+            "framework": "TIDE", "genes": genes, "lfc_vector": lfc_vector,
+            "gpr_string_dict": gpr_string_dict, "reaction_ids": list(task_structure.index), "or_func": or_func,
+        }
+
+        with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
+            map_result = pool.map_async(MTEA_parallel_worker, seeds, chunksize=parallel_chunksize(n_permutations, n_cpus))
+            random_projection = np.array(list(map_result.get()))
+
     random_projection_df = pd.DataFrame(random_projection, columns=task_structure.index).T
 
     # Reduce from random reaction projections to random metabolic scores
@@ -325,8 +327,18 @@ def calculate_TIDE_scores_context_aware(gene_dict:dict, tasks_routes:dict, compl
     scores: numpy.ndarray
         An array of metabolic scores, in the same order as `tasks_routes`.
     """
+    # One reaction_cache shared across every task for this gene_dict --
+    # routes of the same task typically share 90%+ of their reactions, and
+    # reactions repeat across tasks too, so without this the same
+    # (reaction, gene_dict) pair gets rescored many times over (measured:
+    # ~600x more assess_reaction calls than there are distinct reactions,
+    # across a real 220-task list). See score_task's `reaction_cache` doc.
+    reaction_cache: dict = {}
     scores = [
-        score_task(routes, complex_cache, gene_dict, aggregation="mean", task_id=task_id, or_func=or_func).score
+        score_task(
+            routes, complex_cache, gene_dict, aggregation="mean", task_id=task_id, or_func=or_func,
+            reaction_cache=reaction_cache,
+        ).score
         for task_id, routes in tasks_routes.items()
     ]
     return np.array(scores)
@@ -376,13 +388,17 @@ def calculate_random_TIDE_scores_context_aware(
         else:
             seeds = [np.random.randint(0, 1_000_000) for _ in range(n_permutations)]
 
-        arguments = [
-            (genes, lfc_vector, tasks_routes, complex_cache, seeds[i], or_func, "TIDE-context-aware")
-            for i in range(n_permutations)
-        ]
-        with Pool(processes=n_cpus) as pool:
-            map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
-            random_scores = np.array([array for array in map_result.get()])
+        # tasks_routes/complex_cache can be large for a full task list --
+        # sending them once per worker process (via the Pool initializer)
+        # rather than once per permutation matters a lot more here than for
+        # "TIDE"'s smaller gpr_string_dict/task_structure payload.
+        state = {
+            "framework": "TIDE-context-aware", "genes": genes, "lfc_vector": lfc_vector,
+            "tasks_routes": tasks_routes, "complex_cache": complex_cache, "or_func": or_func,
+        }
+        with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
+            map_result = pool.map_async(MTEA_parallel_worker, seeds, chunksize=parallel_chunksize(n_permutations, n_cpus))
+            random_scores = np.array(list(map_result.get()))
 
     return pd.DataFrame(random_scores, columns=task_ids)
 
@@ -400,6 +416,7 @@ def compute_TIDE(
         mapping_strategy:str = "classic",
         tasks_routes:dict = None,
         complex_cache:dict = None,
+        permutation_strategy:str = "argmax",
     ):
     """
     Wrapper function to compute the TIDE framework.
@@ -450,6 +467,25 @@ def compute_TIDE(
         `mteapy.context_scoring.build_complex_cache`. Required when
         mapping_strategy="context-aware"; ignored otherwise.
 
+    permutation_strategy: str ["argmax" | "fixed-route"]
+        Only meaningful when mapping_strategy="context-aware" (classic
+        TIDE has no routes to choose between). "argmax" (default, the
+        statistically more rigorous choice) re-runs the full
+        best-of-enumerated-routes search for every permutation, exactly
+        mirroring the real score's own procedure -- this correctly
+        captures that "best of K routes" runs hotter under random data
+        than any single route would (an order-statistics/multiple-
+        comparisons effect), so the resulting p-value properly accounts
+        for it. "fixed-route" instead fixes each task's real-data winning
+        route once (arbitrarily, among ties -- they share the same score
+        by construction, so this can't change the result) and only scores
+        that single reaction set under every permutation -- much cheaper
+        (a task's routes typically share 90%+ of their reactions, so this
+        approaches classic TIDE's per-permutation cost), but the resulting
+        null distribution runs slightly narrower than "argmax"'s, since it
+        never re-earns "best of K" under permutation -- a real trade-off,
+        not a free lunch, which is why it's opt-in rather than the default.
+
     Returns
     -------
     TIDE_results: pandas.DataFrame
@@ -460,10 +496,34 @@ def compute_TIDE(
     if mapping_strategy == "context-aware":
         if tasks_routes is None or complex_cache is None:
             raise ValueError("mapping_strategy='context-aware' requires both tasks_routes and complex_cache.")
+        if permutation_strategy not in ("argmax", "fixed-route"):
+            raise ValueError(f"Unsupported permutation_strategy {permutation_strategy!r}. Please, use 'argmax' or 'fixed-route'.")
+
         task_ids = list(tasks_routes.keys())
-        scores = calculate_TIDE_scores_context_aware(gene_dict, tasks_routes, complex_cache, or_func)
+        reaction_cache: dict = {}
+        reports = {
+            task_id: score_task(routes, complex_cache, gene_dict, aggregation="mean", task_id=task_id, or_func=or_func,
+                                 reaction_cache=reaction_cache)
+            for task_id, routes in tasks_routes.items()
+        }
+        scores = np.array([reports[task_id].score for task_id in task_ids])
+
+        if permutation_strategy == "fixed-route":
+            permutation_routes = {}
+            for task_id in task_ids:
+                winners = reports[task_id].winning_route_ids
+                # No winner (an empty route set) has nothing to fix -- fall
+                # back to the full route set so that task still gets a
+                # (fully re-searched) null distribution rather than being
+                # silently skipped.
+                permutation_routes[task_id] = (
+                    {winners[0]: tasks_routes[task_id][winners[0]]} if winners else tasks_routes[task_id]
+                )
+        else:
+            permutation_routes = tasks_routes
+
         random_scores_df = calculate_random_TIDE_scores_context_aware(
-            gene_dict, tasks_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed
+            gene_dict, permutation_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed
         )
     elif mapping_strategy == "classic":
         task_structure = task_structure.astype(bool)

@@ -142,6 +142,17 @@ def mtea_parser():
 
     _add_mapping_strategy_args(TIDE_parser)
 
+    TIDE_parser.add_argument("--permutation-strategy", action="store", type=str, dest="permutation_strategy",
+                              choices=["argmax", "fixed-route"], default="argmax",
+                              help="Only used with --mapping-strategy context-aware (CellFie has no permutation "
+                                   "test to apply this to). 'argmax' (default, more rigorous): re-runs the full "
+                                   "best-of-routes search for every permutation, exactly mirroring the real "
+                                   "score's procedure. 'fixed-route' (faster): fixes each task's real-data "
+                                   "winning route once and only scores that single reaction set under every "
+                                   "permutation -- cheaper, but the resulting null distribution runs slightly "
+                                   "less conservative than 'argmax', since it never re-earns \"best of K "
+                                   "routes\" under permutation.")
+
     ###########################################
     # CellFie parser
     ###########################################
