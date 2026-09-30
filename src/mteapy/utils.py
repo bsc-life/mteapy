@@ -242,58 +242,94 @@ def calculate_pvalue(score:float, random_scores:np.ndarray):
     return pvalue
 
 
-def MTEA_parallel_worker(arguments:tuple) -> list:
+def parallel_chunksize(n_permutations:int, n_cpus:int) -> int:
+    """A `Pool.map_async` chunksize that actually distributes work across
+    `n_cpus` workers, aiming for ~4 chunks per worker so the run stays
+    reasonably load-balanced. A fixed chunksize (e.g. 100) silently defeats
+    parallelization entirely whenever n_permutations doesn't far exceed it
+    -- with 32 permutations and chunksize=100, every permutation lands in
+    one chunk sent to a single worker, and n_cpus>1 buys nothing.
     """
-    Helper function to parallellise the computation of random metabolic scores to inferr significancy.
+    return max(1, n_permutations // max(1, n_cpus * 4))
+
+
+_WORKER_STATE: dict = {}
+
+
+def init_MTEA_parallel_worker(state: dict) -> None:
+    """`multiprocessing.Pool(initializer=..., initargs=(state,))` target:
+    stashes read-only shared state (gene list, GPR/route/complex data) once
+    per *worker process*, instead of it being rebuilt into every
+    permutation's own argument tuple and re-pickled/sent over IPC
+    `n_permutations` times. For framework="TIDE", this is also where the
+    (unpicklable-as-is, or at least awkward to trust across processes)
+    string-encoded GPR rules get reconstructed into real `GPR` objects --
+    once per worker instead of once per permutation.
+
+    `state` must have a "framework" key (one of "TIDE-essential", "TIDE",
+    "TIDE-context-aware") plus that framework's own fields -- see
+    `MTEA_parallel_worker`'s branches, and the `calculate_random_*`
+    functions in `mteapy.tide` that build `state` and open the `Pool`.
+    """
+    global _WORKER_STATE
+    state = dict(state)
+    if state["framework"] == "TIDE":
+        state["gpr_dict"] = {
+            rxn_id: GPR.from_string(gpr_str) if gpr_str else None
+            for rxn_id, gpr_str in state.pop("gpr_string_dict").items()
+        }
+    _WORKER_STATE = state
+
+
+def MTEA_parallel_worker(random_seed:int) -> list:
+    """
+    Computes one permutation's random score array, using whichever
+    framework's state an earlier `init_MTEA_parallel_worker` call stashed
+    in this worker process.
 
     Parameters
     ----------
-    arguments: tuple
-        A tuple containing different arguments needed to compute a random score array.
-    
+    random_seed: int
+        This permutation's random seed.
+
     Returns
     -------
     random_scores: numpy.ndarray
         An array of random metabolic scores in the same order as the columns of the task structure object.
     """
-    # Extracting first last argument to know which framework has the user selected
-    framework = arguments[-1]
-    
+    state = _WORKER_STATE
+    framework = state["framework"]
+    np.random.seed(random_seed)
+    lfc_vector = state["lfc_vector"].copy()  # never mutate the shared array in place
+    np.random.shuffle(lfc_vector)
+    random_gene_dict = dict(zip(state["genes"], lfc_vector))
+
     if framework == "TIDE-essential":
-        genes, lfc_vector, task_to_gene, random_seed, _ = arguments
-        np.random.seed(random_seed)
-        np.random.shuffle(lfc_vector)
-        random_gene_dict = dict(zip(genes, lfc_vector))
-        
+        task_to_gene = state["task_to_gene"]
         random_scores = [np.mean([random_gene_dict.get(gene, 0.0) for gene in task_to_gene[task]]) for task in task_to_gene]
-        
+
         return np.array(random_scores)
-    
+
     elif framework == "TIDE":
-        genes, lfc_vector, task_structure, gpr_string_dict, random_seed, or_func, _ = arguments
-        np.random.seed(random_seed)
-        np.random.shuffle(lfc_vector)
-        random_gene_dict = dict(zip(genes, lfc_vector))
-        
-        # Convert string GPR rules back to GPR objects
-        gpr_dict = {rxn_id: GPR.from_string(gpr_str) if gpr_str else None 
-                   for rxn_id, gpr_str in gpr_string_dict.items()}
-        
-        random_scores = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
-                        for rxn in task_structure.index]
+        gpr_dict = state["gpr_dict"]
+        or_func = state["or_func"]
+        random_scores = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) for rxn in state["reaction_ids"]]
 
         return np.array(random_scores)
 
     elif framework == "TIDE-context-aware":
-        genes, lfc_vector, tasks_routes, complex_cache, random_seed, or_func, _ = arguments
-        np.random.seed(random_seed)
-        np.random.shuffle(lfc_vector)
-        random_gene_dict = dict(zip(genes, lfc_vector))
-
         from mteapy.context_scoring import score_task  # local import: avoids a module-load-order cycle with mteapy.tide
 
+        tasks_routes = state["tasks_routes"]
+        complex_cache = state["complex_cache"]
+        or_func = state["or_func"]
+        # Fresh per permutation (this worker call = one permutation's
+        # gene_dict), shared across every task in it -- see score_task's
+        # `reaction_cache` doc for why this matters.
+        reaction_cache: dict = {}
         random_scores = [
-            score_task(routes, complex_cache, random_gene_dict, aggregation="mean", task_id=task_id, or_func=or_func).score
+            score_task(routes, complex_cache, random_gene_dict, aggregation="mean", task_id=task_id, or_func=or_func,
+                       reaction_cache=reaction_cache).score
             for task_id, routes in tasks_routes.items()
         ]
 
