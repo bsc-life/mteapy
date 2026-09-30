@@ -271,6 +271,7 @@ def score_task(
     aggregation: str = "min",
     task_id: str = "",
     or_func: str = "max",
+    reaction_cache: dict[str, "ReactionAssessment"] | None = None,
 ) -> TaskActivityReport:
     """Score every candidate route of one task against one sample's expression.
 
@@ -306,16 +307,33 @@ def score_task(
     or_func:
         Passed through to `assess_reaction`/`tied_argmax`: "max" (default)
         for a non-negative signal, "absmax" for one that can be negative.
+    reaction_cache:
+        Optional `{reaction_id: ReactionAssessment}` cache, reused (and
+        filled in) across calls. `assess_reaction`'s result for a given
+        reaction depends only on that reaction's (fixed) candidate
+        complexes and `gene_dict` -- never on which route or task is
+        asking -- so a caller scoring many tasks/routes against the *same*
+        `gene_dict` (e.g. every task for one sample, or one permutation's
+        shuffled values across the whole task list) should build one cache
+        and pass it to every call: routes of the same task typically share
+        90%+ of their reactions, and reactions repeat across tasks too, so
+        without this a task list can trigger orders of magnitude more
+        `assess_reaction` calls than there are distinct reactions. Passing
+        None (default) scopes the cache to just this one call, matching
+        the previous (uncached-across-calls) behavior.
     """
     if aggregation not in _SUPPORTED_AGGREGATIONS:
         raise ValueError(f"Unsupported aggregation {aggregation!r}; use one of {_SUPPORTED_AGGREGATIONS}")
 
+    cache = reaction_cache if reaction_cache is not None else {}
+
     route_reports: dict[int, RouteReport] = {}
     for route_id, reactions in task_routes.items():
-        assessments = {
-            rid: assess_reaction(rid, complex_cache.get(rid, ()), gene_dict, or_func=or_func)
-            for rid in reactions
-        }
+        assessments = {}
+        for rid in reactions:
+            if rid not in cache:
+                cache[rid] = assess_reaction(rid, complex_cache.get(rid, ()), gene_dict, or_func=or_func)
+            assessments[rid] = cache[rid]
         agg_score = _aggregate([a.score for a in assessments.values()], aggregation)
         route_reports[route_id] = RouteReport(route_id, agg_score, aggregation, assessments)
 
@@ -368,16 +386,24 @@ def score_tasks_matrix(
     all_reactions = sorted({r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
     complex_cache = build_complex_cache(model, all_reactions)
 
-    score_rows: dict[str, dict[str, float]] = {}
-    complete_rows: dict[str, dict[str, bool]] = {}
-    for task_id, routes in tasks_routes.items():
-        score_row, complete_row = {}, {}
-        for sample in expr_df.columns:
-            gene_dict = expr_df[sample].to_dict()
-            report = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func)
-            score_row[sample] = report.score
-            complete_row[sample] = report.is_complete
-        score_rows[task_id] = score_row
-        complete_rows[task_id] = complete_row
+    score_rows: dict[str, dict[str, float]] = {task_id: {} for task_id in tasks_routes}
+    complete_rows: dict[str, dict[str, bool]] = {task_id: {} for task_id in tasks_routes}
+
+    # Looped sample-first (not task-first) so one reaction_cache can be
+    # shared across every task for a given sample -- assess_reaction's
+    # result only depends on (reaction, gene_dict), and routes/tasks
+    # overlap heavily in which reactions they use, so scoring task-first
+    # would rebuild the same (reaction, sample) result redundantly for
+    # every task that happens to share it.
+    for sample in expr_df.columns:
+        gene_dict = expr_df[sample].to_dict()
+        reaction_cache: dict = {}
+        for task_id, routes in tasks_routes.items():
+            report = score_task(
+                routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func,
+                reaction_cache=reaction_cache,
+            )
+            score_rows[task_id][sample] = report.score
+            complete_rows[task_id][sample] = report.is_complete
 
     return pd.DataFrame(score_rows).T, pd.DataFrame(complete_rows).T

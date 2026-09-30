@@ -166,6 +166,36 @@ def test_score_task_absmax_picks_the_most_differentially_regulated_route():
     assert absmax_report.score == -4.0
 
 
+def test_score_task_reaction_cache_gives_identical_results_to_uncached():
+    complex_cache = {"R1": (("g1",),), "R2": (("g2",),)}
+    task_routes = {1: frozenset({"R1"}), 2: frozenset({"R2"})}
+    gene_dict = {"g1": 0.1, "g2": -4.0}
+
+    uncached = score_task(task_routes, complex_cache, gene_dict, task_id="T", or_func="absmax")
+    cache = {}
+    cached = score_task(task_routes, complex_cache, gene_dict, task_id="T", or_func="absmax", reaction_cache=cache)
+
+    assert cached.score == uncached.score
+    assert cached.winning_route_ids == uncached.winning_route_ids
+    assert set(cache.keys()) == {"R1", "R2"}
+
+
+def test_score_task_reaction_cache_is_reused_across_calls_not_recomputed():
+    complex_cache = {"R1": (("g1",),)}
+    task_routes = {1: frozenset({"R1"})}
+    gene_dict = {"g1": 2.0}
+    cache = {}
+
+    score_task(task_routes, complex_cache, gene_dict, task_id="T1", reaction_cache=cache)
+    # Poison the cached entry so a second call can only get the right
+    # answer if it reuses the cache instead of recomputing from gene_dict.
+    poisoned = cache["R1"]
+    cache["R1"] = poisoned.__class__(poisoned.reaction_id, 999.0, poisoned.complex_scores, poisoned.winning_complexes, poisoned.evidence)
+
+    report = score_task(task_routes, complex_cache, gene_dict, task_id="T2", reaction_cache=cache)
+    assert report.score == 999.0
+
+
 def test_score_task_single_route_is_never_tied_and_is_complete():
     complex_cache = {"R1": (("g1",),), "R2": (("g2",),)}
     task_routes = {1: frozenset({"R1", "R2"})}
