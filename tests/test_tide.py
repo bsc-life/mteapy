@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 
 from cobra.core.gene import GPR
-from mteapy.tide import calculate_TIDE_scores
+from mteapy.context_scoring import build_complex_cache
+from mteapy.tide import calculate_TIDE_scores, calculate_TIDE_scores_context_aware, compute_TIDE
 
 
 @pytest.mark.parametrize("gene_dict,expected", [
@@ -20,3 +21,36 @@ def test_TIDE_scores(gene_dict, expected):
     ))
 
     assert all(calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, or_func="absmax") == expected)
+
+
+def test_calculate_TIDE_scores_context_aware_picks_the_absmax_supported_route(toy_model):
+    # R1+R2 (g1=-5, g2=-5) has mean score -5; R3 alone (g3=2) has mean score
+    # 2. or_func="absmax" picks the route by largest magnitude, so {R1,R2}
+    # (|-5| > |2|) should win, not the higher raw value.
+    tasks_routes = {"AC": {1: frozenset({"R1", "R2"}), 2: frozenset({"R3"})}}
+    complex_cache = build_complex_cache(toy_model, {"R1", "R2", "R3"})
+    gene_dict = {"g1": -5, "g2": -5, "g3": 2}
+
+    scores = calculate_TIDE_scores_context_aware(gene_dict, tasks_routes, complex_cache, or_func="absmax")
+
+    assert list(scores) == [-5]
+
+
+def test_compute_TIDE_context_aware_requires_routes_and_complex_cache(toy_model):
+    expr_data = pd.DataFrame({"lfc": [-5, -5, 2]}, index=["g1", "g2", "g3"])
+    with pytest.raises(ValueError):
+        compute_TIDE(expr_data, "lfc", None, toy_model, or_func="absmax", mapping_strategy="context-aware")
+
+
+def test_compute_TIDE_context_aware_scores_the_winning_route(toy_model):
+    tasks_routes = {"AC": {1: frozenset({"R1", "R2"}), 2: frozenset({"R3"})}}
+    complex_cache = build_complex_cache(toy_model, {"R1", "R2", "R3"})
+    expr_data = pd.DataFrame({"lfc": [-5, -5, 2]}, index=["g1", "g2", "g3"])
+
+    results = compute_TIDE(
+        expr_data, "lfc", None, toy_model, or_func="absmax", n_permutations=5, n_cpus=1,
+        mapping_strategy="context-aware", tasks_routes=tasks_routes, complex_cache=complex_cache,
+    )
+
+    assert list(results["task_id"]) == ["AC"]
+    assert results.loc[0, "score"] == -5

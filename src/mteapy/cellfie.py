@@ -4,6 +4,7 @@ import numpy as np
 from cobra.core.gene import GPR
 from cobra.core import Model
 
+from mteapy.context_scoring import score_tasks_matrix
 from mteapy.utils import map_gpr_w_names
 
 
@@ -183,15 +184,63 @@ def calculate_CellFie_scores(ral_df:pd.DataFrame, task_structure:pd.DataFrame):
     return metabolic_scores_df, binary_scores_df
 
 
+###########################################
+# Context-aware mapping strategy
+###########################################
+
+def calculate_CellFie_scores_context_aware(gal_df:pd.DataFrame, tasks_routes:dict, model:Model):
+    """
+    Context-aware analogue of `calculate_CellFie_scores`: instead of a
+    single fixed per-task reaction set, scores every enumerated alternate
+    route of each task (`mteapy.context_scoring.score_task`, via
+    `score_tasks_matrix`) and takes the best-supported one for each sample
+    -- using "mean" aggregation and `or_func="max"` to match CellFie's own
+    non-negative-expression convention (`calculate_CellFie_scores` also
+    aggregates with `np.mean`).
+
+    Parameters
+    ----------
+    gal_df: pandas.DataFrame
+        A pandas DataFrame containing the GALs (genes x samples) -- the
+        same input `calculate_RAL` takes in the classic pipeline; this
+        skips straight from gene-level GALs to task scores, since a route's
+        reaction set isn't fixed and so can't be pre-reduced to a flat RAL
+        matrix the way `calculate_RAL` does.
+
+    tasks_routes: dict
+        `{task_id: {route_id: reaction_id_set}}`, e.g. from
+        `mteapy.routes.load_multiroute_tasks`/`load_task_routes`.
+
+    model: cobra.core.Model
+        The COBRA model the routes' reaction ids come from, used to look up
+        each reaction's GPR for `build_complex_cache`.
+
+    Returns
+    -------
+    metabolic_scores_df: pandas.DataFrame
+        A pandas DataFrame containing the metabolic scores where rows correspond to metabolic tasks and columns to samples.
+
+    binary_scores_df: pandas.DataFrame
+        A pandas DataFrame containing the binary metabolic scores after applying a certain threshold of activity. Rows correspond to metabolic tasks and columns to samples.
+    """
+    metabolic_scores_df, _ = score_tasks_matrix(tasks_routes, model, gal_df, aggregation="mean", or_func="max")
+    metabolic_scores_df.index.name = "task_id"
+    binary_scores_df = (metabolic_scores_df >= 5 * np.log(2)).astype(int)
+
+    return metabolic_scores_df, binary_scores_df
+
+
 def compute_CellFie(
-        expr_data:pd.DataFrame, 
-        task_structure:pd.DataFrame, 
-        model:Model, 
-        thresh_type:str = "local", 
-        local_thresh_type:str = "minmaxmean", 
-        minmaxmean_thresh_type:str = "percentile", 
-        upper_bound:float = 0.75, lower_bound:float = 0.25, 
-        global_thresh_type:str = None, global_value:float = None
+        expr_data:pd.DataFrame,
+        task_structure:pd.DataFrame,
+        model:Model,
+        thresh_type:str = "local",
+        local_thresh_type:str = "minmaxmean",
+        minmaxmean_thresh_type:str = "percentile",
+        upper_bound:float = 0.75, lower_bound:float = 0.25,
+        global_thresh_type:str = None, global_value:float = None,
+        mapping_strategy:str = "classic",
+        tasks_routes:dict = None,
     ):
     """
     Wrapper function to compute the CellFie framework.
@@ -225,31 +274,49 @@ def compute_CellFie(
     global_thresh_type: str ["value" | "percentile"] 
         Global thresholding strategy to use. Value will consider a global value as threshold for all genes, and percentile will consider a global percentile as threshold for all genes (default: None).
     
-    global_value: float 
+    global_value: float
         Value to use for global thresholding strategy. If using percentile, value must be between 0 and 1 (default: None).
-    
+
+    mapping_strategy: str ["classic" | "context-aware"]
+        "classic" (default) scores each task's single, fixed reaction set from
+        `task_structure` (the traditional CellFie approach). "context-aware"
+        instead scores every enumerated alternate route of each task and
+        takes the best-supported one for each sample
+        (`mteapy.context_scoring.score_tasks_matrix`), which needs
+        `tasks_routes` instead of `task_structure`.
+
+    tasks_routes: dict
+        `{task_id: {route_id: reaction_id_set}}`. Required when
+        mapping_strategy="context-aware"; ignored otherwise.
+
     Returns
     -------
     metabolic_scores_df: pandas.DataFrame
         A pandas DataFrame containing the metabolic scores where rows correspond to metabolic tasks and columns to samples.
-    
+
     binary_scores_df: pandas.DataFrame
         A pandas DataFrame containing the binary metabolic scores after applying a certain threshold of activity. Rows correspond to metabolic tasks and columns to samples.
     """
-    task_structure = task_structure.astype(bool)
-
-    # CellFie only uses reactions with valid GPR rules, internally they are considered as 0.0
-    gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.gpr != GPR.from_string("")}
-
     gal_df = calculate_GAL(
-        expr_data, 
-        thresh_type, 
+        expr_data,
+        thresh_type,
         local_thresh_type,
-        minmaxmean_thresh_type, 
-        upper_bound, lower_bound, 
+        minmaxmean_thresh_type,
+        upper_bound, lower_bound,
         global_thresh_type, global_value
     )
-    ral_df = calculate_RAL(gal_df, gpr_dict)
-    metabolic_scores_df, binary_scores_df = calculate_CellFie_scores(ral_df, task_structure)
+
+    if mapping_strategy == "context-aware":
+        if tasks_routes is None:
+            raise ValueError("mapping_strategy='context-aware' requires tasks_routes.")
+        metabolic_scores_df, binary_scores_df = calculate_CellFie_scores_context_aware(gal_df, tasks_routes, model)
+    elif mapping_strategy == "classic":
+        task_structure = task_structure.astype(bool)
+        # CellFie only uses reactions with valid GPR rules, internally they are considered as 0.0
+        gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.gpr != GPR.from_string("")}
+        ral_df = calculate_RAL(gal_df, gpr_dict)
+        metabolic_scores_df, binary_scores_df = calculate_CellFie_scores(ral_df, task_structure)
+    else:
+        raise ValueError(f"Unsupported mapping_strategy {mapping_strategy!r}. Please, use 'classic' or 'context-aware'.")
 
     return metabolic_scores_df, binary_scores_df

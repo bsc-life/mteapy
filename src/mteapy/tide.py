@@ -4,7 +4,8 @@ from multiprocessing import Pool
 
 from cobra.core import Model
 
-from mteapy.utils import map_gpr, calculate_pvalue, MTEA_parallel_worker 
+from mteapy.context_scoring import score_task
+from mteapy.utils import map_gpr, calculate_pvalue, MTEA_parallel_worker
 
 
 ###########################################
@@ -288,16 +289,117 @@ def calculate_random_TIDE_scores(
     return pd.DataFrame(random_scores, columns=task_structure.columns)
 
 
+###########################################
+# Context-aware mapping strategy
+###########################################
+
+def calculate_TIDE_scores_context_aware(gene_dict:dict, tasks_routes:dict, complex_cache:dict, or_func:str):
+    """
+    Context-aware analogue of `calculate_TIDE_scores`: instead of a single
+    fixed per-task reaction set, scores every enumerated alternate route of
+    each task (`mteapy.context_scoring.score_task`) and takes the
+    best-supported one -- using "mean" aggregation for parity with TIDE's
+    own published methodology (`calculate_TIDE_scores` also aggregates with
+    `np.mean`; see `score_task`'s own docstring on why "mean", not this
+    package's "min" default, matches TIDE).
+
+    Parameters
+    ----------
+    gene_dict: dict
+        A dictionary of genes to their expression values.
+
+    tasks_routes: dict
+        `{task_id: {route_id: reaction_id_set}}`, e.g. from
+        `mteapy.routes.load_multiroute_tasks`/`load_task_routes`.
+
+    complex_cache: dict
+        `{reaction_id: candidate_complexes}`, from
+        `mteapy.context_scoring.build_complex_cache`. Must cover every
+        reaction appearing in `tasks_routes`.
+
+    or_func: str ["absmax" | "max"]
+        Function to evaluate OR rules within a GPR rule.
+
+    Returns
+    -------
+    scores: numpy.ndarray
+        An array of metabolic scores, in the same order as `tasks_routes`.
+    """
+    scores = [
+        score_task(routes, complex_cache, gene_dict, aggregation="mean", task_id=task_id, or_func=or_func).score
+        for task_id, routes in tasks_routes.items()
+    ]
+    return np.array(scores)
+
+
+def calculate_random_TIDE_scores_context_aware(
+        gene_dict:dict,
+        tasks_routes:dict,
+        complex_cache:dict,
+        or_func:str,
+        n_permutations:int = 1000,
+        n_cpus:int = 1,
+        random_seed:int = None
+    ):
+    """
+    Context-aware analogue of `calculate_random_TIDE_scores`: computes Nº
+    permutations * random metabolic scores (one per task in `tasks_routes`)
+    to infer significancy, using `mteapy.context_scoring.score_task`
+    instead of a fixed reaction set. See `calculate_TIDE_scores_context_aware`
+    for `tasks_routes`/`complex_cache`; other parameters mirror
+    `calculate_random_TIDE_scores`.
+
+    Returns
+    -------
+    random_scores_df: pandas.DataFrame
+        A pandas DataFrame where rows are permutations and columns are the
+        task ids of `tasks_routes`.
+    """
+    genes = list(gene_dict.keys())
+    lfc_vector = np.array(list(gene_dict.values()))
+    task_ids = list(tasks_routes.keys())
+
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
+    if n_cpus <= 1:
+        random_scores = np.zeros((n_permutations, len(task_ids)))
+        for i in range(n_permutations):
+            np.random.shuffle(lfc_vector)
+            random_gene_dict = dict(zip(genes, lfc_vector))
+            random_scores[i, :] = calculate_TIDE_scores_context_aware(
+                random_gene_dict, tasks_routes, complex_cache, or_func
+            )
+    else:
+        if random_seed is not None:
+            seeds = [random_seed + i for i in range(n_permutations)]
+        else:
+            seeds = [np.random.randint(0, 1_000_000) for _ in range(n_permutations)]
+
+        arguments = [
+            (genes, lfc_vector, tasks_routes, complex_cache, seeds[i], or_func, "TIDE-context-aware")
+            for i in range(n_permutations)
+        ]
+        with Pool(processes=n_cpus) as pool:
+            map_result = pool.map_async(MTEA_parallel_worker, arguments, chunksize=100)
+            random_scores = np.array([array for array in map_result.get()])
+
+    return pd.DataFrame(random_scores, columns=task_ids)
+
+
 def compute_TIDE(
-        expr_data:pd.DataFrame, 
+        expr_data:pd.DataFrame,
         lfc_col:str,
-        task_structure:pd.DataFrame, 
-        model:Model, 
+        task_structure:pd.DataFrame,
+        model:Model,
         or_func:str,
         n_permutations:int = 1000,
         n_cpus:int = 1,
         random_scores_flag:bool = False,
-        random_seed:int = None
+        random_seed:int = None,
+        mapping_strategy:str = "classic",
+        tasks_routes:dict = None,
+        complex_cache:dict = None,
     ):
     """
     Wrapper function to compute the TIDE framework.
@@ -330,29 +432,53 @@ def compute_TIDE(
     
     random_seed: int
         Random seed for reproducibility. If None, random seeds will be generated (default: None).
-    
+
+    mapping_strategy: str ["classic" | "context-aware"]
+        "classic" (default) scores each task's single, fixed reaction set from
+        `task_structure` (the traditional TIDE approach). "context-aware"
+        instead scores every enumerated alternate route of each task and
+        takes the best-supported one (`mteapy.context_scoring.score_task`),
+        which needs `tasks_routes` and `complex_cache` instead of
+        `task_structure`.
+
+    tasks_routes: dict
+        `{task_id: {route_id: reaction_id_set}}`. Required when
+        mapping_strategy="context-aware"; ignored otherwise.
+
+    complex_cache: dict
+        `{reaction_id: candidate_complexes}`, from
+        `mteapy.context_scoring.build_complex_cache`. Required when
+        mapping_strategy="context-aware"; ignored otherwise.
+
     Returns
     -------
     TIDE_results: pandas.DataFrame
         A pandas DataFrame where rows are metabolic tasks and columns correspond to their score from TIDE, their average random score calculated from the null distribution, and their p-value.
     """
     gene_dict = dict(zip(expr_data.index, expr_data[lfc_col]))
-    task_structure = task_structure.astype(bool)
-    gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.id in task_structure.index}
 
-    scores = calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, or_func)
-    random_scores_df = calculate_random_TIDE_scores(
-        gene_dict, 
-        task_structure, 
-        gpr_dict, 
-        or_func, 
-        n_permutations, 
-        n_cpus,
-        random_seed
-    )
-    pvalues = [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(task_structure.columns)]
+    if mapping_strategy == "context-aware":
+        if tasks_routes is None or complex_cache is None:
+            raise ValueError("mapping_strategy='context-aware' requires both tasks_routes and complex_cache.")
+        task_ids = list(tasks_routes.keys())
+        scores = calculate_TIDE_scores_context_aware(gene_dict, tasks_routes, complex_cache, or_func)
+        random_scores_df = calculate_random_TIDE_scores_context_aware(
+            gene_dict, tasks_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed
+        )
+    elif mapping_strategy == "classic":
+        task_structure = task_structure.astype(bool)
+        gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.id in task_structure.index}
+        task_ids = list(task_structure.columns)
+        scores = calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, or_func)
+        random_scores_df = calculate_random_TIDE_scores(
+            gene_dict, task_structure, gpr_dict, or_func, n_permutations, n_cpus, random_seed
+        )
+    else:
+        raise ValueError(f"Unsupported mapping_strategy {mapping_strategy!r}. Please, use 'classic' or 'context-aware'.")
 
-    TIDE_results = pd.DataFrame({"task_id": task_structure.columns,
+    pvalues = [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(task_ids)]
+
+    TIDE_results = pd.DataFrame({"task_id": task_ids,
                                  "score": scores,
                                 #"random_score": random_scores_df.mean(),
                                  "pvalue": pvalues

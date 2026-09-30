@@ -281,9 +281,24 @@ def MTEA_parallel_worker(arguments:tuple) -> list:
         
         random_scores = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
                         for rxn in task_structure.index]
-        
+
         return np.array(random_scores)
-    
+
+    elif framework == "TIDE-context-aware":
+        genes, lfc_vector, tasks_routes, complex_cache, random_seed, or_func, _ = arguments
+        np.random.seed(random_seed)
+        np.random.shuffle(lfc_vector)
+        random_gene_dict = dict(zip(genes, lfc_vector))
+
+        from mteapy.context_scoring import score_task  # local import: avoids a module-load-order cycle with mteapy.tide
+
+        random_scores = [
+            score_task(routes, complex_cache, random_gene_dict, aggregation="mean", task_id=task_id, or_func=or_func).score
+            for task_id, routes in tasks_routes.items()
+        ]
+
+        return np.array(random_scores)
+
     else:
         raise TypeError(f"Framework {framework} not available for parallelization.")
 
