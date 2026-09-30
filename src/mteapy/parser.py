@@ -84,6 +84,12 @@ def mtea_parser():
     enum_parser.add_argument("--source", action="store", type=str, dest="source", required=True,
                               help="Label to store this task list's routes under (e.g. 'full'); lets a second run "
                                    "against a different model/solver be stored separately for comparison.")
+    enum_parser.add_argument("--task-list", action="store", type=str, dest="task_list", default=None,
+                              help="Groups this --source with any others reading from the same underlying task "
+                                   "list (e.g. a solver-comparison re-run), independent of which specific "
+                                   "solver/run produced them -- lets a caller select by task list (e.g. 'cellfie') "
+                                   "without needing to know every individual source name. Omit to leave an "
+                                   "existing classification for this source unchanged.")
     enum_parser.add_argument("--solver", action="store", type=str, dest="solver", default=None,
                               help="COBRApy solver name (e.g. 'gurobi', 'cplex', 'glpk'). Default: whatever cobra picks.")
     enum_parser.add_argument("--max-routes", action="store", type=int, dest="max_routes", default=10,

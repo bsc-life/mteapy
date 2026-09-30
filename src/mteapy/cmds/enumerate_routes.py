@@ -114,7 +114,7 @@ def run(args) -> None:
     origin_repo, origin_ref = _git_provenance(task_file)
     source_changed = register_task_source(
         conn, source, task_file, sha256=task_source_sha256(task_file),
-        origin_repo=origin_repo, origin_ref=origin_ref,
+        origin_repo=origin_repo, origin_ref=origin_ref, task_list=args.task_list,
     )
     if source_changed:
         print(f"WARNING: the task-list file for source={source!r} has changed (different content hash) "

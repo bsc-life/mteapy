@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE TABLE IF NOT EXISTS task_sources (
     source TEXT PRIMARY KEY,
+    task_list TEXT,
     file_path TEXT NOT NULL,
     sha256 TEXT NOT NULL,
     origin_repo TEXT,
@@ -88,6 +89,15 @@ _FLUX_COLUMN_MIGRATION = "ALTER TABLE route_reactions ADD COLUMN flux REAL"
 # column existed), which callers should treat as "can't verify, don't resume".
 _DEFINITION_HASH_COLUMN_MIGRATION = "ALTER TABLE tasks ADD COLUMN definition_hash TEXT"
 
+# `task_sources.task_list` groups multiple `source` enumeration runs that
+# come from the *same underlying task list* (e.g. "cellfie_consensus" and
+# a "cellfie_consensus_gurobi" solver-comparison re-run both belong to the
+# "cellfie" task list) under one label a caller can select by, independent
+# of which specific solver/run produced a given source's routes. NULL means
+# "not yet classified" (e.g. a source registered before this column
+# existed).
+_TASK_LIST_COLUMN_MIGRATION = "ALTER TABLE task_sources ADD COLUMN task_list TEXT"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -122,6 +132,10 @@ def connect(path: str) -> sqlite3.Connection:
     if "definition_hash" not in existing_task_columns:
         conn.execute(_DEFINITION_HASH_COLUMN_MIGRATION)
         conn.commit()
+    existing_task_source_columns = {row[1] for row in conn.execute("PRAGMA table_info(task_sources)")}
+    if "task_list" not in existing_task_source_columns:
+        conn.execute(_TASK_LIST_COLUMN_MIGRATION)
+        conn.commit()
     return conn
 
 
@@ -154,6 +168,7 @@ def register_task_source(
     sha256: str,
     origin_repo: str | None = None,
     origin_ref: str | None = None,
+    task_list: str | None = None,
 ) -> bool:
     """Record (or update) provenance for the task-list file a `source` was
     enumerated from: which file, its content hash, and (when known) the
@@ -168,6 +183,18 @@ def register_task_source(
     record anywhere of which file (or version of it) a `source` label like
     "cellfie_consensus" actually corresponds to.
 
+    `task_list` groups this `source` with any others reading from the same
+    underlying task list, independent of which specific solver/run produced
+    them -- e.g. a one-off solver-comparison re-run of the same task list
+    would get its own `source` but the same `task_list`. Passing None
+    (default) leaves any previously-recorded value for this source alone --
+    same for `origin_repo`/`origin_ref` (also None-safe this way). This
+    matches `register_task`'s own COALESCE semantics: a caller that doesn't
+    know/care about the grouping, or couldn't determine the origin repo/ref
+    for this particular call (`mteapy.cmds.enumerate_routes`'s
+    `_git_provenance` is itself best-effort), can still call this without
+    erasing another caller's already-recorded values.
+
     Returns True if a task-list file was already recorded for this `source`
     under a *different* sha256 -- i.e. the file has since changed. Callers
     re-enumerating a `source` may want to warn on that, since it means
@@ -177,13 +204,15 @@ def register_task_source(
     row = conn.execute("SELECT sha256 FROM task_sources WHERE source = ?", (source,)).fetchone()
     changed = row is not None and row[0] != sha256
     conn.execute(
-        "INSERT INTO task_sources (source, file_path, sha256, origin_repo, origin_ref, recorded_at) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
+        "INSERT INTO task_sources (source, task_list, file_path, sha256, origin_repo, origin_ref, recorded_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT (source) DO UPDATE SET "
+        "task_list = COALESCE(excluded.task_list, task_sources.task_list), "
         "file_path = excluded.file_path, sha256 = excluded.sha256, "
-        "origin_repo = excluded.origin_repo, origin_ref = excluded.origin_ref, "
+        "origin_repo = COALESCE(excluded.origin_repo, task_sources.origin_repo), "
+        "origin_ref = COALESCE(excluded.origin_ref, task_sources.origin_ref), "
         "recorded_at = excluded.recorded_at",
-        (source, file_path, sha256, origin_repo, origin_ref, _now()),
+        (source, task_list, file_path, sha256, origin_repo, origin_ref, _now()),
     )
     conn.commit()
     return changed
@@ -192,13 +221,25 @@ def register_task_source(
 def get_task_source(conn: sqlite3.Connection, source: str) -> dict | None:
     """The recorded task-list provenance for `source`, or None if never registered."""
     row = conn.execute(
-        "SELECT source, file_path, sha256, origin_repo, origin_ref, recorded_at "
+        "SELECT source, task_list, file_path, sha256, origin_repo, origin_ref, recorded_at "
         "FROM task_sources WHERE source = ?",
         (source,),
     ).fetchone()
     if row is None:
         return None
-    return dict(zip(["source", "file_path", "sha256", "origin_repo", "origin_ref", "recorded_at"], row))
+    return dict(zip(["source", "task_list", "file_path", "sha256", "origin_repo", "origin_ref", "recorded_at"], row))
+
+
+def get_sources_for_task_list(conn: sqlite3.Connection, task_list: str) -> list[str]:
+    """Every `source` registered under `task_list` (see `register_task_source`),
+    e.g. `get_sources_for_task_list(conn, "cellfie")` -> every solver-run
+    source reading from the CellFie-consensus task list, not just one of
+    them by name. Returns an empty list if nothing is registered under that
+    task_list."""
+    rows = conn.execute(
+        "SELECT source FROM task_sources WHERE task_list = ? ORDER BY source", (task_list,),
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def register_task(

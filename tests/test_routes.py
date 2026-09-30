@@ -1,6 +1,7 @@
 from mteapy.routes import (
     connect,
     get_enumeration_status,
+    get_sources_for_task_list,
     get_task_definition_hash,
     get_task_source,
     list_tasks,
@@ -64,6 +65,39 @@ def test_register_task_source_reregistering_same_hash_reports_no_change():
 def test_get_task_source_returns_none_when_never_registered():
     conn = _fresh_db()
     assert get_task_source(conn, "unknown_source") is None
+
+
+def test_register_task_source_groups_multiple_sources_under_one_task_list():
+    conn = _fresh_db()
+    register_task_source(conn, "cellfie_consensus", "tasks.txt", sha256="abc", task_list="cellfie")
+    register_task_source(conn, "cellfie_consensus_gurobi", "tasks.txt", sha256="abc", task_list="cellfie")
+    register_task_source(conn, "full", "full_tasks.txt", sha256="def", task_list="full")
+
+    assert get_sources_for_task_list(conn, "cellfie") == ["cellfie_consensus", "cellfie_consensus_gurobi"]
+    assert get_sources_for_task_list(conn, "full") == ["full"]
+    assert get_sources_for_task_list(conn, "unknown") == []
+
+
+def test_register_task_source_omitting_task_list_does_not_clear_a_previous_value():
+    conn = _fresh_db()
+    register_task_source(conn, "cellfie_consensus", "tasks.txt", sha256="abc", task_list="cellfie")
+    # A later call (e.g. a re-enumeration run) that doesn't know/pass
+    # task_list must not silently erase the earlier classification.
+    register_task_source(conn, "cellfie_consensus", "tasks.txt", sha256="abc")
+    assert get_task_source(conn, "cellfie_consensus")["task_list"] == "cellfie"
+
+
+def test_register_task_source_omitting_origin_does_not_clear_a_previous_value():
+    conn = _fresh_db()
+    register_task_source(conn, "full", "tasks.txt", sha256="abc",
+                          origin_repo="bsc-life/Human-GEM", origin_ref="4f25a6a")
+    # A caller that couldn't determine origin_repo/origin_ref for this call
+    # (e.g. _git_provenance's own best-effort failure mode) must not wipe
+    # out an already-recorded origin.
+    register_task_source(conn, "full", "tasks.txt", sha256="abc")
+    record = get_task_source(conn, "full")
+    assert record["origin_repo"] == "bsc-life/Human-GEM"
+    assert record["origin_ref"] == "4f25a6a"
 
 
 def test_record_and_load_single_task_routes():
