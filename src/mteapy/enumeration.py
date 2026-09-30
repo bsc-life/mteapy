@@ -288,8 +288,8 @@ def compute_task_alternate_routes(
     persist each result via `mteapy.routes.record_enumeration_result`,
     seeding subsequent runs with `mteapy.routes.load_task_routes` +
     `enumerate_alternate_routes`'s `seed_routes` -- see
-    `scripts/enumerate_cellfie_consensus_routes.py` in the wider project for
-    the reference implementation of that pattern.
+    `mteapy.cmds.enumerate_routes` (the `run-mtea tasks enumerate-routes`
+    command) for the reference implementation of that pattern.
 
     Returns
     -------

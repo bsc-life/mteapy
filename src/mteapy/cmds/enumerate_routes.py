@@ -1,20 +1,13 @@
-"""Enumerate alternate routes for the CellFie-consensus task list
-(metabolicTasks_CellfieConsensus.txt -- the task list used in the AGS-TIDE
-paper, github.com/bsc-life/ags-paper) against our current Human-GEM v2.0.1
-model, storing results into the same routes_human2.db under
-source="cellfie_consensus" (or --source), alongside the existing
-source="full" (metabolicTasks_Full.txt) routes already there.
+"""`run-mtea tasks enumerate-routes` -- build/extend the alternate-route
+database context-aware scoring reads from (see `mteapy.enumeration`,
+`mteapy.routes`, `mteapy.context_scoring`).
 
-Deliberately NOT re-deriving the paper's own older Human-GEM build (the one
-bundled in mteapy's own package data, ~13085 reactions) -- using our
-current model version here means downstream scores won't exactly reproduce
-the paper's original published TIDE numbers, which is expected and
-accepted: the goal is a usable, topology-aware route database for this
-task list on the model version we're already using everywhere else in
-this project, not a historical reproduction. Each route's flux vector is
-captured and persisted alongside it (mteapy.enumeration.RouteResult /
-mteapy.routes.record_enumeration_result's `fluxes` argument), so a later
-network view never needs to re-solve for it.
+No expression/sample data is involved at all: this enumerates, for a given
+model + RAVEN-style task list, every alternate reaction set (up to
+--max-routes) that can accomplish each task, and persists them. It's
+dataset-agnostic structural precomputation, run once per (model,
+task-list) pair and reused by every sample later scored against it --
+which is why it's a `tasks` command, not an `analyze` one.
 
 --mode selects how to handle a (source, model) that already has results:
   (unset)  "plain" -- always fully re-enumerate every task from scratch,
@@ -23,7 +16,8 @@ network view never needs to re-solve for it.
   reset    Wipe all existing routes/enumeration_runs for this
            (source, model_id) first (mteapy.routes.reset_source), then
            enumerate everything from scratch. Task metadata (description,
-           definition_hash) is kept.
+           definition_hash) is kept. Prompts for confirmation first (this
+           permanently discards enumeration results), unless --yes.
   resume   Skip any task already exhaustively enumerated (see
            mteapy.routes.get_enumeration_status); for a task that
            previously hit its max_routes cap, seed the MILP with its
@@ -31,16 +25,14 @@ network view never needs to re-solve for it.
            search only for genuinely new ones beyond those. Refuses (loudly,
            per-task) to resume a task whose definition has changed since
            the seed routes were recorded (mteapy.tasks.task_definition_hash)
-           -- an edited task list is a real possibility in this project
-           (see the Human-GEM curation-fix work), and silently seeding cuts
-           from a stale definition would produce wrong results with no error.
-
-Supports --limit N and --start-at TASK_ID too, for timing/partial runs
-independent of --mode.
+           -- silently seeding cuts from a stale definition would produce
+           wrong results with no error.
 """
-import argparse
+from __future__ import annotations
+
 import os
 import subprocess
+import sys
 import time
 
 from cobra.io import read_sbml_model
@@ -54,25 +46,16 @@ from mteapy.routes import (
 from mteapy.task_model import build_metabolite_lookup
 from mteapy.tasks import parse_task_file, task_definition_hash
 
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))       # mteapy/scripts/
-MTEAPY_DATA = os.path.join(os.path.dirname(SCRIPT_DIR), "src", "mteapy", "data")
-# Human-GEM is a sibling checkout of the whole workspace, not something
-# bundled into mteapy -- see PROVENANCE.md for why the model/routes DB are
-# a frozen copy inside mteapy while the task-list source stays external.
-WORKSPACE = os.path.dirname(os.path.dirname(SCRIPT_DIR))
-
-MODEL_PATH = os.path.join(MTEAPY_DATA, "HumanGEM_v201.xml")
-DB_PATH = os.path.join(MTEAPY_DATA, "routes_human2.db")
-TASK_FILE = os.path.join(WORKSPACE, "Human-GEM", "data", "metabolicTasks", "metabolicTasks_CellfieConsensus.txt")
-SOURCE = "cellfie_consensus"
-MAX_ROUTES = 10
+MTEAPY_DATA = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "data")
+DEFAULT_MODEL_PATH = os.path.join(MTEAPY_DATA, "HumanGEM_v201.xml")
+DEFAULT_DB_PATH = os.path.join(MTEAPY_DATA, "routes_human2.db")
 
 
 def _git_provenance(file_path: str) -> tuple[str | None, str | None]:
     """Best-effort (origin_repo, origin_ref) for the git repo containing
     `file_path`, or (None, None) if it's not inside one (or git isn't
     available). Used to record which exact commit of the task list's
-    source repo (e.g. Human-GEM) a route database's tasks came from."""
+    source repo a route database's tasks came from."""
     directory = os.path.dirname(os.path.abspath(file_path))
     try:
         remote = subprocess.run(
@@ -88,34 +71,42 @@ def _git_provenance(file_path: str) -> tuple[str | None, str | None]:
         return None, None
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=None, help="Only process the first N tasks (for timing).")
-    parser.add_argument("--start-at", type=int, default=0, help="Skip tasks with id < this.")
-    parser.add_argument("--solver", type=str, default=None, help="COBRApy solver name (e.g. 'gurobi', 'glpk'). Default: whatever cobra picks.")
-    parser.add_argument("--source", type=str, default=SOURCE, help="source label to store routes under (lets a second run, e.g. a different solver, be stored separately for comparison).")
-    parser.add_argument("--mode", choices=["reset", "resume"], default=None,
-                        help="'reset': wipe existing routes for this (source, model) first. "
-                             "'resume': skip already-exhaustive tasks, continue capped ones from their stored routes. "
-                             "Default: plain full re-run of every task.")
-    parser.add_argument("--task-file", type=str, default=TASK_FILE, help="Path to a RAVEN-style task list file.")
-    parser.add_argument("--only", type=str, default=None,
-                        help="Comma-separated task ids to process, ignoring --limit/--start-at (for targeted repairs).")
-    args = parser.parse_args()
+def _confirm_reset(conn, source: str, model_id: int, skip_confirmation: bool) -> bool:
+    """Prints how many routes --mode reset would permanently delete and asks
+    for confirmation, unless --yes was passed. Returns True to proceed."""
+    n_routes = conn.execute(
+        "SELECT COUNT(*) FROM routes WHERE source = ? AND model_id = ?", (source, model_id),
+    ).fetchone()[0]
+    if n_routes == 0:
+        return True
+    print(f"WARNING: --mode reset will permanently delete {n_routes} existing route(s) "
+          f"for source={source!r}, model_id={model_id}.")
+    if skip_confirmation:
+        return True
+    if not sys.stdin.isatty():
+        print("Refusing to reset non-interactively without --yes.", flush=True)
+        return False
+    reply = input("Type 'yes' to continue: ").strip().lower()
+    return reply == "yes"
+
+
+def run(args) -> None:
     source = args.source
     task_file = args.task_file
+    model_path = args.model_file or DEFAULT_MODEL_PATH
+    db_path = args.db or DEFAULT_DB_PATH
     only_ids = set(args.only.split(",")) if args.only else None
 
     print("Loading model...", flush=True)
-    model = read_sbml_model(MODEL_PATH)
+    model = read_sbml_model(model_path)
     if args.solver:
         model.solver = args.solver
     print(f"solver: {model.solver.interface.__name__}", flush=True)
     lookup = build_metabolite_lookup(model)
 
-    conn = connect(DB_PATH)
+    conn = connect(db_path)
     model_id = register_model(
-        conn, MODEL_PATH, sha256=model_file_sha256(MODEL_PATH),
+        conn, model_path, sha256=model_file_sha256(model_path),
         n_reactions=len(model.reactions), n_genes=len(model.genes),
     )
     print(f"model_id={model_id} ({len(model.reactions)} reactions, {len(model.genes)} genes)", flush=True)
@@ -131,6 +122,9 @@ def main() -> None:
               f"definitions. Consider --mode reset if that's not intended.", flush=True)
 
     if args.mode == "reset":
+        if not _confirm_reset(conn, source, model_id, args.skip_confirmation):
+            print("Aborted.", flush=True)
+            return
         print(f"--mode reset: clearing existing routes for source={source!r}, model_id={model_id}...", flush=True)
         reset_source(conn, source, model_id)
 
@@ -171,24 +165,22 @@ def main() -> None:
         stop_info: dict = {}
         try:
             new_results = enumerate_alternate_routes(
-                model, task, max_routes=MAX_ROUTES, met_lookup=lookup, seed_routes=seed_reaction_sets,
+                model, task, max_routes=args.max_routes, met_lookup=lookup, seed_routes=seed_reaction_sets,
                 stop_info=stop_info,
             )
         except Exception as exc:  # noqa: BLE001
             elapsed = time.time() - start
             print(f"[{i}/{len(tasks)}] task {task.id} ERROR ({elapsed:.1f}s): {exc}", flush=True)
             if seed_reaction_sets:
-                # Preserve the already-good seed data and its accurate count
-                # rather than clobbering it with an empty-routes/error record.
                 record_enumeration_result(
                     conn, source, task.id, model_id, seed_reaction_sets, status="error",
-                    max_routes=MAX_ROUTES, hit_cap=False, truncated=True, elapsed_seconds=elapsed,
+                    max_routes=args.max_routes, hit_cap=False, truncated=True, elapsed_seconds=elapsed,
                     fluxes=seed_fluxes,
                 )
             else:
                 record_enumeration_result(
                     conn, source, task.id, model_id, [], status="error",
-                    max_routes=MAX_ROUTES, hit_cap=False, truncated=False, elapsed_seconds=elapsed,
+                    max_routes=args.max_routes, hit_cap=False, truncated=False, elapsed_seconds=elapsed,
                 )
             continue
 
@@ -198,24 +190,18 @@ def main() -> None:
         reason = stop_info.get("reason")
 
         if not all_reaction_sets:
-            # No seeds and no routes found at all -- the task itself is infeasible.
             print(f"[{i}/{len(tasks)}] task {task.id} infeasible ({elapsed:.1f}s)", flush=True)
             record_enumeration_result(
                 conn, source, task.id, model_id, [], status="infeasible",
-                max_routes=MAX_ROUTES, hit_cap=False, truncated=False, elapsed_seconds=elapsed,
+                max_routes=args.max_routes, hit_cap=False, truncated=False, elapsed_seconds=elapsed,
             )
             continue
 
-        # hit_cap=True only when *this* search genuinely ran out of budget
-        # (there may be more); truncated=True when it stopped early for the
-        # numerical degeneracy reason (mteapy.enumeration's stop_info) --
-        # neither "more definitely exist" nor "proven exhaustive", so a
-        # future --mode resume must not treat this task as settled either way.
         hit_cap = reason == "max_routes_reached"
         truncated = reason == "degenerate_duplicate"
         record_enumeration_result(
             conn, source, task.id, model_id, all_reaction_sets, status="optimal",
-            max_routes=MAX_ROUTES, hit_cap=hit_cap, truncated=truncated, elapsed_seconds=elapsed,
+            max_routes=args.max_routes, hit_cap=hit_cap, truncated=truncated, elapsed_seconds=elapsed,
             fluxes=all_fluxes,
         )
         degenerate_note = " [stopped: numerical degeneracy]" if truncated else ""
@@ -226,7 +212,3 @@ def main() -> None:
 
     total = time.time() - t0
     print(f"Done: {len(tasks)} tasks in {total:.1f}s ({total / max(len(tasks), 1):.1f}s/task avg).", flush=True)
-
-
-if __name__ == "__main__":
-    main()

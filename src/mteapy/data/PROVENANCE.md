@@ -2,7 +2,7 @@
 
 mteapy ships two independent generations of Human-GEM data, for its two
 independent scoring methods. They are deliberately different model
-versions -- see `enumerate_cellfie_consensus_routes.py`'s docstring for why
+versions -- see `run-mtea tasks enumerate-routes`'s docstring for why
 the newer generation doesn't try to reproduce the older one's numbers.
 
 ## TIDE / CellFie generation (older)
@@ -41,7 +41,7 @@ the newer generation doesn't try to reproduce the older one's numbers.
   per `source` label (e.g. `"full"`, `"cellfie_consensus"`), the exact
   task-list file path, its sha256, and (when available) the origin repo
   URL and git commit it was read from. This is populated automatically
-  by `enumerate_cellfie_consensus_routes.py` on every run, and flags
+  by `run-mtea tasks enumerate-routes` on every run, and flags
   (with a warning) if a `source`'s task-list file content has changed
   since it was last recorded -- catching task-list drift that
   `tasks.definition_hash` alone (per-task, not per-file) wouldn't.
@@ -51,6 +51,6 @@ the newer generation doesn't try to reproduce the older one's numbers.
 Any future regeneration of the bundled model/routes DB should record, at
 minimum, the exporting script's own `git rev-parse HEAD` (of whichever
 repo the source model came from) at export time -- exactly what
-`enumerate_cellfie_consensus_routes.py`'s `_git_provenance()` helper does
+`run-mtea tasks enumerate-routes`'s `_git_provenance()` helper does
 automatically for the task-list file already. Retrofit the model export
 step the same way if it's ever automated.
