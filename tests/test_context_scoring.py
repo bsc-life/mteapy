@@ -5,6 +5,7 @@ from mteapy.context_scoring import (
     ReactionEvidence,
     assess_reaction,
     build_complex_cache,
+    compute_TAS,
     score_task,
     score_tasks_matrix,
     tied_argmax,
@@ -324,6 +325,75 @@ def test_build_complex_cache_and_score_tasks_matrix(toy_model):
     assert scores.loc["LINEAR", "sample_A"] == 10.0  # min(10, 10) beats R3's 1.0
     assert scores.loc["LINEAR", "sample_B"] == 10.0  # R3 alone scores 10.0
     assert complete.loc["LINEAR", "sample_A"] and complete.loc["LINEAR", "sample_B"]
+
+
+def test_compute_TAS_context_aware_matches_score_tasks_matrix(toy_model):
+    tasks_routes = {
+        "LINEAR": {1: frozenset({"R1", "R2"}), 2: frozenset({"R3"})},
+    }
+    expr_df = pd.DataFrame({
+        "sample_A": {"g1": 10.0, "g2": 10.0, "g3": 1.0},
+        "sample_B": {"g1": 1.0, "g2": 1.0, "g3": 10.0},
+    })
+
+    scores, complete = compute_TAS(
+        expr_df, task_structure=None, model=toy_model,
+        mapping_strategy="context-aware", tasks_routes=tasks_routes,
+    )
+    expected_scores, expected_complete = score_tasks_matrix(tasks_routes, toy_model, expr_df)
+    pd.testing.assert_frame_equal(scores, expected_scores, check_names=False)
+    pd.testing.assert_frame_equal(complete, expected_complete, check_names=False)
+    assert scores.index.name == "task_id"
+    assert complete.index.name == "task_id"
+
+
+def test_compute_TAS_classic_builds_one_fixed_route_per_task(toy_model):
+    # task_structure: reactions (index) x tasks (columns), boolean.
+    task_structure = pd.DataFrame(
+        {"TASK_A": [True, True, False, False], "TASK_B": [False, False, True, False]},
+        index=["R1", "R2", "R3", "R4"],
+    )
+    expr_df = pd.DataFrame({
+        "sample_A": {"g1": 10.0, "g2": 4.0, "g3": 1.0},
+        "sample_B": {"g1": 1.0, "g2": 1.0, "g3": 10.0},
+    })
+
+    scores, complete = compute_TAS(
+        expr_df, task_structure=task_structure, model=toy_model, mapping_strategy="classic",
+    )
+    assert set(scores.index) == {"TASK_A", "TASK_B"}
+    assert scores.loc["TASK_A", "sample_A"] == 4.0   # min(g1=10, g2=4)
+    assert scores.loc["TASK_A", "sample_B"] == 1.0   # min(g1=1, g2=1)
+    assert scores.loc["TASK_B", "sample_A"] == 1.0   # R3 alone -> g3
+    assert scores.loc["TASK_B", "sample_B"] == 10.0
+    assert complete.loc["TASK_A", "sample_A"] and complete.loc["TASK_B", "sample_B"]
+
+
+def test_compute_TAS_aggregation_choice_changes_the_score(toy_model):
+    tasks_routes = {"LINEAR": {1: frozenset({"R1", "R2", "R3"})}}
+    expr_df = pd.DataFrame({"sample_A": {"g1": 10.0, "g2": 2.0, "g3": 6.0}})
+
+    min_scores, _ = compute_TAS(expr_df, None, toy_model, aggregation="min",
+                                 mapping_strategy="context-aware", tasks_routes=tasks_routes)
+    mean_scores, _ = compute_TAS(expr_df, None, toy_model, aggregation="mean",
+                                  mapping_strategy="context-aware", tasks_routes=tasks_routes)
+    assert min_scores.loc["LINEAR", "sample_A"] == 2.0
+    assert mean_scores.loc["LINEAR", "sample_A"] == pytest.approx((10.0 + 2.0 + 6.0) / 3)
+
+
+def test_compute_TAS_classic_requires_task_structure(toy_model):
+    with pytest.raises(ValueError, match="requires task_structure"):
+        compute_TAS(pd.DataFrame(), task_structure=None, model=toy_model, mapping_strategy="classic")
+
+
+def test_compute_TAS_context_aware_requires_tasks_routes(toy_model):
+    with pytest.raises(ValueError, match="requires tasks_routes"):
+        compute_TAS(pd.DataFrame(), task_structure=None, model=toy_model, mapping_strategy="context-aware")
+
+
+def test_compute_TAS_rejects_unknown_mapping_strategy(toy_model):
+    with pytest.raises(ValueError, match="Unsupported mapping_strategy"):
+        compute_TAS(pd.DataFrame(), task_structure=None, model=toy_model, mapping_strategy="bogus")
 
 
 def test_and_linked_paralog_pair_correctly_flags_no_evidence():

@@ -407,3 +407,96 @@ def score_tasks_matrix(
             complete_rows[task_id][sample] = report.is_complete
 
     return pd.DataFrame(score_rows).T, pd.DataFrame(complete_rows).T
+
+
+def compute_TAS(
+        expr_data: pd.DataFrame,
+        task_structure: pd.DataFrame | None,
+        model: Model,
+        aggregation: str = "min",
+        or_func: str = "max",
+        mapping_strategy: str = "classic",
+        tasks_routes: dict | None = None,
+    ):
+    """Task Activity Score (TAS): project expression straight through each
+    task's GPR (AND = min, OR = `or_func`) and aggregate across its
+    reaction(s) by `aggregation` -- no percentile-threshold gene-activity
+    transform, no essentiality/permutation step. This is CellFie/TIDE's
+    peer for the case where that transform is itself the thing being
+    second-guessed: a reaction/task scoring zero after thresholding is
+    ambiguous between "genuinely off" and "just under this threshold
+    convention's floor" (see the `metabolic-variability` project's own
+    `01_gtex_reaction_expression_qc.ipynb`/`model_curation.qmd` for a worked
+    case), and TAS's score is exactly `TaskActivityReport.score` -- the
+    plain, untransformed quantity every other method's own activity claim
+    is ultimately built from.
+
+    Parameters
+    ----------
+    expr_data: pandas.DataFrame
+        Gene expression, genes (index) x samples (columns). Non-negative
+        expression pairs with `or_func="max"`; a signed signal (e.g.
+        log-fold-change) needs `or_func="absmax"`.
+
+    task_structure: pandas.DataFrame
+        A boolean matrix, reactions (index) x tasks (columns) -- the
+        classic CellFie/TIDE single-fixed-reaction-set representation.
+        Required when `mapping_strategy="classic"`; ignored otherwise.
+
+    model: cobra.core.Model
+        The COBRA model the task structure's/routes' reaction ids come
+        from, used to look up each reaction's GPR.
+
+    aggregation: str ["min" | "median" | "mean"]
+        How a task's (or one route's) reaction scores combine into one
+        task score (default: "min", the strict weakest-link reading this
+        project's own route-tie analysis validated for the expression
+        case -- see `score_task`'s own docstring for when "median"/"mean"
+        are the better fit instead).
+
+    or_func: str ["max" | "absmax"]
+        Passed through to `assess_reaction`/`tied_argmax`: "max" (default)
+        for a non-negative signal, "absmax" for one that can be negative.
+
+    mapping_strategy: str ["classic" | "context-aware"]
+        "classic" (default) scores each task's single, fixed reaction set
+        from `task_structure`. "context-aware" instead scores every
+        enumerated alternate route of each task and takes the
+        best-supported one for each sample (`score_tasks_matrix`), which
+        needs `tasks_routes` instead of `task_structure`.
+
+    tasks_routes: dict
+        `{task_id: {route_id: reaction_id_set}}`. Required when
+        mapping_strategy="context-aware"; ignored otherwise.
+
+    Returns
+    -------
+    scores_df: pandas.DataFrame
+        Tasks (index, named "task_id") x samples: each cell's TAS.
+
+    complete_df: pandas.DataFrame
+        Same shape, boolean: `TaskActivityReport.is_complete` for that
+        (task, sample) -- whether the score rests on fully SUPPORTED
+        evidence rather than any AMBIGUOUS/NO_EVIDENCE reaction. Unlike
+        CellFie's `binary_scores_df`, this is not an activity call against
+        a threshold -- TAS makes no such call -- it is purely an evidence-
+        completeness flag alongside the raw score.
+    """
+    if mapping_strategy == "context-aware":
+        if tasks_routes is None:
+            raise ValueError("mapping_strategy='context-aware' requires tasks_routes.")
+    elif mapping_strategy == "classic":
+        if task_structure is None:
+            raise ValueError("mapping_strategy='classic' requires task_structure.")
+        task_structure = task_structure.astype(bool)
+        tasks_routes = {
+            task_id: {0: frozenset(task_structure.index[task_structure[task_id]])}
+            for task_id in task_structure.columns
+        }
+    else:
+        raise ValueError(f"Unsupported mapping_strategy {mapping_strategy!r}. Please, use 'classic' or 'context-aware'.")
+
+    scores_df, complete_df = score_tasks_matrix(tasks_routes, model, expr_data, aggregation=aggregation, or_func=or_func)
+    scores_df.index.name = "task_id"
+    complete_df.index.name = "task_id"
+    return scores_df, complete_df

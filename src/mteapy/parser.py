@@ -193,4 +193,24 @@ def mtea_parser():
 
     _add_mapping_strategy_args(CellFie_parser)
 
+    ###########################################
+    # TAS parser
+    ###########################################
+
+    TAS_parser = analyze_subparser.add_parser("TAS", help="performs Task Activity Score (TAS) analysis: plain expression-through-GPR projection, no threshold transform", formatter_class=FORMATTER)
+
+    TAS_parser.add_argument("expr_file", action="store", help="Filename for a normalized gene expression file (e.g., TPM). It should contain at least one column with gene names/symbols. Genes must be stored as EnsemblIDs.")
+
+    TAS_parser.add_argument("-d", "--delim", action="store", type=str, dest="sep", default="\t", help="Field delimiter for inputed file.")
+
+    TAS_parser.add_argument("-o", "--out", action="store", type=str, dest="out_dir", default="tas_results", help="Directory to store the analysis' results. The result file(s) will be stored in the specified directory in a tab-sepparated format (.tsv).")
+
+    TAS_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
+
+    TAS_parser.add_argument("--aggregation", action="store", type=str, dest="aggregation", default="min", choices=["min", "median", "mean"], help="How a task's (or one route's) reaction scores combine into one task score.")
+
+    TAS_parser.add_argument("--or_func", action="store", type=str, dest="or_func", choices=["max", "absmax"], default="max", help="Name of the function that will be used to resolve OR relationships in gene-protein-reaction (GPR) rules. Possible values are absmax, which will return the absolute maximum value, and max, which will return the maximum value.")
+
+    _add_mapping_strategy_args(TAS_parser)
+
     return parser

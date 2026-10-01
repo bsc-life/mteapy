@@ -39,6 +39,7 @@ MTEApy is comprised of two main constraint-based metabolic modelling frameworks,
 | **CellFie** [[1](#references)] | [LewisLabUCSD/CellFie](https://github.com/LewisLabUCSD/CellFie) | Utilises a normalized expression matrix (e.g., TPMs) to compute a gene activity score using user-defined thresholds, and then projects it into metabolic reactions. Using the participating reactions for each metabolic task, a metabolic score is computed which indicates the metabolic activity of the metabolic tasks across samples. |
 | **TIDE** [[2](#references)] | [csbl/iCardio](https://github.com/csbl/iCardio) | Utilises a differential expression result and its log-FC values to project them into metabolic reactions. Using the participating reactions for each metabolic task, a metabolic score is computed which indicates the change in metabolic activity for one control-sample. A p-value is assigned to each score after performing a permutation test. |
 | **TIDE-essential** | [bsc-life/mteapy](https://github.com/bsc-life/mteapy) | Utilises a differential expression result, its log-FC and essential genes to metabolic tasks to compute a metabolic score which indicates the change in metabolic activity for one control-sample. A p-value is assigned to each score after performing a permutation test. | 
+| **TAS** (Task Activity Score) | [bsc-life/mteapy](https://github.com/bsc-life/mteapy) | Projects expression straight through each task's GPR (no percentile-threshold gene-activity transform, no permutation test) and aggregates its reaction scores by a user-chosen function (min/median/mean) -- the plain, untransformed quantity CellFie's/TIDE's own activity scores are themselves built from, useful on its own when the threshold transform is the thing being second-guessed. |
 
 MTEApy is designed to be used both as a command-line tool and as a Python module in a Jupyter Notebook or Python script.
 
@@ -47,7 +48,7 @@ MTEApy is designed to be used both as a command-line tool and as a Python module
 If used as a command-line tool, run the command `run-mtea` and specify the desired framework. By default, the metabolic model used by the command is the Human-GEM [[3](#references)] and, therefore, the metabolic tasks are also compatible with Human-GEM.
 
 ```sh
-run-mtea [-h] [-v] [-c] [-t] [-s] {TIDE-essential,TIDE,CellFie}
+run-mtea [-h] [-v] [-c] [-t] [-s] {TIDE-essential,TIDE,CellFie,TAS}
 ```
 For more details on the input parameters, run the `-h` or `--help` after any of the commands.
 

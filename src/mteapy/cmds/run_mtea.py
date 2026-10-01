@@ -11,7 +11,7 @@ from mteapy.colors import bcolors as bc
 from mteapy.utils import print_banner, mask_lfc_values, add_task_metadata, check_ensemblid
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
-from mteapy.context_scoring import build_complex_cache
+from mteapy.context_scoring import build_complex_cache, compute_TAS
 from mteapy.routes import connect, latest_model_id, load_multiroute_tasks
 from mteapy.cmds import enumerate_routes as enumerate_routes_cmd
 
@@ -296,8 +296,91 @@ def main() -> None:
                 binary_scores_df.to_csv(f"{args.out_dir}/cellfie_binary_scores.tsv", sep="\t", index=False)
             print("- OK.")
 
+        ###########################################
+        # Performs TAS
+        ###########################################
+
+        elif args.analyze_command == "TAS":
+
+            print("Starting Task Activity Score (TAS) analysis.")
+
+            # File and dir status check
+            if not os.path.isfile(args.expr_file):
+                print(f"{bc.FAIL}ERROR: File {args.expr_file} could not be found.{bc.ENDC}\n")
+                exit(1)
+
+            # Out directory handling
+            if not os.path.isdir(args.out_dir):
+                os.makedirs(args.out_dir)
+
+            print(f"Results will be saved into {args.out_dir}")
+
+            # Reading in data
+            expr_data_df = pd.read_csv(args.expr_file, delimiter=args.sep)
+            task_metadata = pd.read_csv(os.path.join(curdir, "../data/task_metadata.tsv"), sep="\t")
+
+            # Column names check
+            if args.gene_col not in expr_data_df.columns:
+                print(f"{bc.FAIL}ERROR: Gene column '{args.gene_col}' not found in input file.{bc.ENDC}\n")
+                exit(1)
+            if any(expr_data_df[args.gene_col].duplicated()):
+                print(f"{bc.FAIL}ERROR: gene column contains duplicated entries.{bc.ENDC}\n")
+                exit(1)
+            if not check_ensemblid(expr_data_df[args.gene_col].values):
+                print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
+                exit(1)
+
+            if args.mapping_strategy == "context-aware":
+                model, tasks_routes, complex_cache = _load_context_aware_inputs(args)
+                task_structure = None
+            else:
+                print("Loading metabolic model", end=" ")
+                model = read_sbml_model(os.path.join(curdir, "../data/HumanGEM.xml.gz"))
+                print("- OK.")
+                task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"),
+                                             sep="\t", index_col=0)
+                tasks_routes = None
+
+            # Filtering genes not in model
+            model_genes = [str(gene) for gene in model.genes]
+            print(f"Nº genes in metabolic model: {len(model_genes)}.")
+
+            expr_data_df.set_index(args.gene_col, inplace=True)
+            initial_genes = expr_data_df.index.values
+            print(f"Nº genes in input file: {len(initial_genes)}.")
+
+            expr_data_df = expr_data_df.loc[[gene for gene in model_genes if gene in expr_data_df.index]]
+            print(f"A total of {len(initial_genes)-len(expr_data_df.index)} genes were not found in the model and were removed.")
+
+            print("Starting analysis:")
+            print(f"\tMapping strategy      = {args.mapping_strategy}")
+            print(f"\tNº samples detected   = {len(expr_data_df.columns)}")
+            print(f"\tAggregation           = {args.aggregation}")
+            print(f"\tOR function           = {args.or_func}")
+
+            # Main execution
+            scores_df, complete_df = compute_TAS(
+                expr_data_df,
+                task_structure,
+                model,
+                aggregation=args.aggregation,
+                or_func=args.or_func,
+                mapping_strategy=args.mapping_strategy,
+                tasks_routes=tasks_routes,
+            )
+
+            # Adding metadata
+            scores_df = add_task_metadata(scores_df, task_metadata)
+            complete_df = add_task_metadata(complete_df, task_metadata)
+
+            # Saving results
+            print(f"Saving results", end=" ")
+            scores_df.to_csv(f"{args.out_dir}/tas_scores.tsv", sep="\t", index=False)
+            complete_df.to_csv(f"{args.out_dir}/tas_complete.tsv", sep="\t", index=False)
+            print("- OK.")
+
         else:
-            print("Usage: run-mtea analyze { TIDE, CellFie } [command options]")
+            print("Usage: run-mtea analyze { TIDE, CellFie, TAS } [command options]")
             print(f"{bc.FAIL}Select one of the available `analyze` commands (see --help for more information).{bc.ENDC}\n")
             exit(1)
 
