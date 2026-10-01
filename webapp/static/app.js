@@ -10,13 +10,15 @@
 
 let datasetId = null;
 let currentSample = null;
-let allTasks = [];      // [{task_id, description, n_routes, score, is_tied, is_complete, winning_route_ids}]
+let allTasks = [];      // [{source, task_id, description, n_routes, score, is_tied, is_complete, winning_route_ids}]
 let sortKey = "task_id";
 let sortAsc = true;
-let selectedTaskId = null;
-let currentData = null; // {task_id, task_description, tissue, panels: [...]}
+let selectedKey = null; // `${source}::${task_id}`
+let currentData = null; // {task_id, task_description, tissue, has_data, panels: [...]}
 let currentIndex = 0;
 let orientation = "TB";
+
+function rowKey(t) { return `${t.source}::${t.task_id}`; }
 
 const statusMsg = document.getElementById("status-msg");
 const sampleSelect = document.getElementById("sample-select");
@@ -76,11 +78,11 @@ sampleSelect.addEventListener("change", async () => {
   const res = await fetch(`/api/datasets/${datasetId}/scores?sample=${encodeURIComponent(currentSample)}`);
   if (!res.ok) { setStatus(`Scoring failed: ${(await res.json()).detail || res.statusText}`); return; }
   const data = await res.json();
-  const byId = Object.fromEntries(data.results.map(r => [r.task_id, r]));
-  allTasks = allTasks.map(t => ({ ...t, ...(byId[t.task_id] || {}) }));
+  const byKey = Object.fromEntries(data.results.map(r => [rowKey(r), r]));
+  allTasks = allTasks.map(t => ({ ...t, ...(byKey[rowKey(t)] || {}) }));
   renderTaskTable();
   setStatus(`Scored ${data.results.length} tasks against ${currentSample}.`);
-  if (selectedTaskId) selectTask(selectedTaskId);
+  if (selectedKey) selectTask(selectedKey);
 });
 
 // ---------- task table ----------
@@ -113,22 +115,23 @@ function renderTaskTable() {
 
   taskTbody.innerHTML = "";
   if (!rows.length) {
-    taskTbody.innerHTML = `<tr><td colspan="4" class="placeholder">No matching tasks.</td></tr>`;
+    taskTbody.innerHTML = `<tr><td colspan="5" class="placeholder">No matching tasks.</td></tr>`;
     return;
   }
   for (const t of rows) {
     const tr = document.createElement("tr");
-    tr.className = "task-row" + (t.task_id === selectedTaskId ? " selected" : "");
+    tr.className = "task-row" + (rowKey(t) === selectedKey ? " selected" : "");
     const scoreCell = t.score === null
       ? `<span class="placeholder">&mdash;</span>`
       : `<span class="score-pill" style="background:${scorePillColor(t)};">${t.score.toFixed(2)}</span>${t.is_tied ? " tied" : ""}`;
     tr.innerHTML = `
+      <td>${t.source}</td>
       <td>${t.task_id}</td>
       <td>${t.description || ""}</td>
       <td>${t.n_routes}</td>
       <td>${scoreCell}</td>
     `;
-    tr.addEventListener("click", () => selectTask(t.task_id));
+    tr.addEventListener("click", () => selectTask(t.source, t.task_id));
     taskTbody.appendChild(tr);
   }
 }
@@ -139,12 +142,13 @@ function scorePillColor(t) {
   return t.is_complete ? "#d2f0e3" : "#fbe9c9";
 }
 
-async function selectTask(taskId) {
-  if (!datasetId || !currentSample) { setStatus("Pick a sample first."); return; }
-  selectedTaskId = taskId;
+async function selectTask(source, taskId) {
+  selectedKey = `${source}::${taskId}`;
   renderTaskTable();
   document.getElementById("panel-title-text").textContent = "Loading...";
-  const res = await fetch(`/api/datasets/${datasetId}/network/${taskId}?sample=${encodeURIComponent(currentSample)}`);
+  const hasSample = datasetId && currentSample;
+  const qs = hasSample ? `?dataset_id=${encodeURIComponent(datasetId)}&sample=${encodeURIComponent(currentSample)}` : "";
+  const res = await fetch(`/api/tasks/${encodeURIComponent(source)}/${encodeURIComponent(taskId)}/network${qs}`);
   if (!res.ok) {
     document.getElementById("panel-title-text").textContent = `Error: ${(await res.json()).detail || res.statusText}`;
     return;
@@ -152,6 +156,7 @@ async function selectTask(taskId) {
   currentData = await res.json();
   currentIndex = 0;
   document.getElementById("task-desc").textContent = currentData.task_description || "";
+  setStatus(hasSample ? "" : "No sample loaded -- showing all route variants, unscored.");
   showPanel(0);
 }
 
@@ -191,9 +196,24 @@ function widthScaleFor(panel) {
 
 function nodeSize(d) { return d.type === "reaction" ? 22 : 18; }
 
-function renderPanel(container, panel, viewWidth, viewHeight) {
+// Topology-only mode (no sample loaded): every reaction naturally comes
+// back as no_gpr/no_evidence against an empty signal, which would
+// otherwise paint the whole route red/gray as if evidence were actually
+// absent. Render plain neutral fills instead so "no data yet" reads as
+// "no data yet", not as a negative finding.
+function nodeFillColorNeutral(d) {
+  if (d.type !== "reaction") {
+    return d.io === "input" ? getComputedColor("--met-input")
+      : d.io === "output" ? getComputedColor("--met-output")
+      : getComputedColor("--surface");
+  }
+  return getComputedColor("--score-empty");
+}
+
+function renderPanel(container, panel, viewWidth, viewHeight, hasData) {
   const colorScale = scaleFor(panel);
   const widthScale = widthScaleFor(panel);
+  const fill = d => hasData ? nodeFillColor(d, colorScale) : nodeFillColorNeutral(d);
 
   NetGraphViz.render(container, panel, {
     orientation,
@@ -201,11 +221,11 @@ function renderPanel(container, panel, viewWidth, viewHeight) {
     viewHeight,
     nodeSize,
     nodeShape: d => d.type === "reaction" ? "rect" : "circle",
-    nodeFill: d => nodeFillColor(d, colorScale),
+    nodeFill: fill,
     nodeStroke: d => d.type === "reaction" ? "rgba(11,11,11,0.25)" : "var(--met-node)",
     edgeColor: (edge, sourceNode, targetNode) => {
       const rxnNode = sourceNode.type === "reaction" ? sourceNode : targetNode;
-      return nodeFillColor(rxnNode, colorScale);
+      return fill(rxnNode);
     },
     edgeWidth: d => widthScale(Math.abs(d.flux || 0)),
     nodeLabel: d => d.type === "reaction" ? NetGraphViz.truncateLabel(d.label, 26) : d.label,
@@ -258,22 +278,28 @@ function renderMetaboliteDetail(d) {
 function renderReactionDetail(d) {
   document.getElementById("detail-title").textContent = "Reaction detail";
   const panel = document.getElementById("detail-panel-inner");
-  const [evLabel, evColor, evBg] = EVIDENCE_LABEL[d.evidence] || ["Unknown", "#898781", "#e1e0d9"];
+  const hasData = !!(currentData && currentData.has_data);
   const idBadges = [
     d.ec_code ? `<span class="ec-badge">EC ${d.ec_code}</span>` : "",
     d.bigg_id ? `<span class="ec-badge">BiGG: ${d.bigg_id}</span>` : "",
   ].join("");
+  const evidenceRow = hasData
+    ? (() => {
+        const [evLabel, evColor, evBg] = EVIDENCE_LABEL[d.evidence] || ["Unknown", "#898781", "#e1e0d9"];
+        return `<div><span class="evidence-badge" style="background:${evBg};color:${evColor};">${evLabel}</span>
+          <span style="color:var(--muted);font-size:0.78rem;margin-left:0.5rem;">score ${d.score.toFixed(2)}</span></div>`;
+      })()
+    : `<div class="placeholder">No sample loaded -- load expression data to see evidence/score here.</div>`;
   panel.innerHTML = `
     <div style="font-weight:600;">${d.label}${idBadges}</div>
     <div style="color:var(--muted);font-size:0.75rem;margin:0.2rem 0 0.6rem;">${d.reaction_id}</div>
     <div style="margin-bottom:0.6rem;"><code>${d.equation}</code></div>
     <div style="color:var(--muted);font-size:0.78rem;margin-bottom:0.4rem;">flux (this route) ${d.flux.toFixed(3)} mmol/gDW/h</div>
-    <div><span class="evidence-badge" style="background:${evBg};color:${evColor};">${evLabel}</span>
-      <span style="color:var(--muted);font-size:0.78rem;margin-left:0.5rem;">score ${d.score.toFixed(2)}</span></div>
+    ${evidenceRow}
     <div class="field-label">${(d.complexes||[]).length} candidate complex${(d.complexes||[]).length===1?'':'es'} (OR alternatives; genes within one AND-required)</div>
     <div id="bipartite-wrap"><svg id="bipartite-svg"></svg></div>
   `;
-  drawBipartite(d.complexes || [], d.complex_scores || [], d.gene_values || {}, d.winning_complexes || []);
+  drawBipartite(d.complexes || [], hasData ? (d.complex_scores || []) : [], hasData ? (d.gene_values || {}) : {}, hasData ? (d.winning_complexes || []) : []);
 }
 
 function drawBipartite(complexes, complexScores, geneValues, winningComplexes) {
@@ -341,10 +367,14 @@ function showPanel(index) {
   const panel = currentData.panels[currentIndex];
   host.innerHTML = "";
   const nRxns = panel.nodes.filter(n => n.type === "reaction").length;
+  const truncNote = currentData.truncated ? `, showing first ${currentData.panels.length} of ${currentData.n_routes_total}` : "";
+  const countLabel = currentData.has_data
+    ? `(${currentIndex + 1} of ${currentData.panels.length} tied)`
+    : `(variant ${currentIndex + 1} of ${currentData.panels.length}${truncNote})`;
   titleText.textContent = currentData.panels.length > 1
-    ? `Task ${currentData.task_id} — Route ${panel.route_id} (${currentIndex + 1} of ${currentData.panels.length} tied) — ${nRxns} reactions`
+    ? `Task ${currentData.task_id} — Route ${panel.route_id} ${countLabel} — ${nRxns} reactions`
     : `Task ${currentData.task_id} — Route ${panel.route_id} — ${nRxns} reactions`;
-  renderPanel(host, panel, 1000, 800);
+  renderPanel(host, panel, 1000, 800, currentData.has_data);
   prevBtn.style.visibility = currentData.panels.length > 1 ? "visible" : "hidden";
   nextBtn.style.visibility = currentData.panels.length > 1 ? "visible" : "hidden";
 }

@@ -33,7 +33,9 @@ from fastapi.staticfiles import StaticFiles
 
 from mteapy.context_scoring import build_complex_cache, score_task
 from mteapy.network import build_route_graph, compute_route_fluxes, load_bigg_ids, resolve_boundary_ids
-from mteapy.routes import connect, latest_model_id, list_tasks, load_route_fluxes, load_task_routes, save_route_fluxes
+from mteapy.routes import (
+    connect, get_task_source, latest_model_id, list_tasks, load_route_fluxes, load_task_routes, save_route_fluxes,
+)
 from mteapy.task_model import build_metabolite_lookup
 from mteapy.tasks import parse_task_file
 
@@ -46,10 +48,9 @@ WORKSPACE = MTEAPY_ROOT.parent
 
 MODEL_PATH = MTEAPY_DATA / "HumanGEM_v201.xml"
 DB_PATH = MTEAPY_DATA / "routes_human2.db"
-TASK_FILE = WORKSPACE / "Human-GEM" / "data" / "metabolicTasks" / "metabolicTasks_Full.txt"
 METABOLITES_TSV = WORKSPACE / "Human-GEM" / "model" / "metabolites.tsv"
 REACTIONS_TSV = WORKSPACE / "Human-GEM" / "model" / "reactions.tsv"
-GTEX_PATH = WORKSPACE / "data" / "gtex" / "GTEx_v10_gene_median_tpm.gct.gz"
+GTEX_PATH = WORKSPACE / "metabolic-variability" / "data" / "raw" / "gtex" / "GTEx_v10_gene_median_tpm.gct.gz"
 
 app = FastAPI(title="mteapy task visualizer")
 
@@ -57,17 +58,40 @@ print("Loading model (this takes a few seconds)...")
 MODEL = read_sbml_model(str(MODEL_PATH))
 MET_LOOKUP = build_metabolite_lookup(MODEL)
 MET_BIGG, RXN_BIGG = load_bigg_ids(str(METABOLITES_TSV), str(REACTIONS_TSV))
-TASKS_BY_ID = {t.id: t for t in parse_task_file(str(TASK_FILE))}
 DB = connect(str(DB_PATH))
 MODEL_ID = latest_model_id(DB)
-print(f"Ready: model_id={MODEL_ID}, {len(TASKS_BY_ID)} tasks parsed.")
 
-# Per-task-model structural caches -- independent of any sample, computed
-# once and reused for every dataset/sample scored against that task.
-_ROUTES_CACHE: dict[str, dict[int, frozenset[str]]] = {}
-_COMPLEX_CACHE: dict[str, dict] = {}
-_FLUX_CACHE: dict[tuple[str, int], dict[str, float]] = {}
-_BOUNDARY_CACHE: dict[str, tuple[set[str], set[str]]] = {}
+# Different sources (e.g. "full" vs "cellfie_consensus_gurobi") read from
+# different task-list files and reuse the same numeric task_id for
+# unrelated tasks -- task "1" is a different task under each source. Every
+# task lookup below is keyed by (source, task_id), never task_id alone;
+# each source's task file is parsed lazily, on first use, via whatever
+# path `task_sources` recorded for it at enumeration time (see
+# `mteapy.cmds.enumerate_routes`/`register_task_source`).
+_TASKS_BY_SOURCE: dict[str, dict[str, object]] = {}
+
+
+def _tasks_for_source(source: str) -> dict[str, object]:
+    if source not in _TASKS_BY_SOURCE:
+        row = get_task_source(DB, source)
+        if row is None:
+            raise HTTPException(404, f"Unknown source {source!r} (no task_sources entry)")
+        task_file = row["file_path"]
+        path = Path(task_file)
+        if not path.is_absolute():
+            path = WORKSPACE / path
+        _TASKS_BY_SOURCE[source] = {t.id: t for t in parse_task_file(str(path))}
+    return _TASKS_BY_SOURCE[source]
+
+
+print(f"Ready: model_id={MODEL_ID}.")
+
+# Per-(source, task)-model structural caches -- independent of any sample,
+# computed once and reused for every dataset/sample scored against that task.
+_ROUTES_CACHE: dict[tuple[str, str], dict[int, frozenset[str]]] = {}
+_COMPLEX_CACHE: dict[tuple[str, str], dict] = {}
+_FLUX_CACHE: dict[tuple[str, str, int], dict[str, float]] = {}
+_BOUNDARY_CACHE: dict[tuple[str, str], tuple[set[str], set[str]]] = {}
 
 # In-memory uploaded datasets: dataset_id -> DataFrame (index=gene_id, columns=samples).
 _DATASETS: dict[str, pd.DataFrame] = {}
@@ -89,27 +113,29 @@ def _load_gtex_example() -> str:
 GTEX_DATASET_ID = _load_gtex_example()
 
 
-def get_task(task_id: str):
-    task = TASKS_BY_ID.get(task_id)
+def get_task(source: str, task_id: str):
+    task = _tasks_for_source(source).get(task_id)
     if task is None:
-        raise HTTPException(404, f"Task {task_id!r} not found in task file")
+        raise HTTPException(404, f"Task {task_id!r} not found in source {source!r}'s task file")
     return task
 
 
-def get_routes(task_id: str) -> dict[int, frozenset[str]]:
-    if task_id not in _ROUTES_CACHE:
-        _ROUTES_CACHE[task_id] = load_task_routes(DB, "full", task_id, MODEL_ID)
-    return _ROUTES_CACHE[task_id]
+def get_routes(source: str, task_id: str) -> dict[int, frozenset[str]]:
+    key = (source, task_id)
+    if key not in _ROUTES_CACHE:
+        _ROUTES_CACHE[key] = load_task_routes(DB, source, task_id, MODEL_ID)
+    return _ROUTES_CACHE[key]
 
 
-def get_complex_cache(task_id: str, routes: dict[int, frozenset[str]]) -> dict:
-    if task_id not in _COMPLEX_CACHE:
+def get_complex_cache(source: str, task_id: str, routes: dict[int, frozenset[str]]) -> dict:
+    key = (source, task_id)
+    if key not in _COMPLEX_CACHE:
         all_reactions = set().union(*routes.values()) if routes else set()
-        _COMPLEX_CACHE[task_id] = build_complex_cache(MODEL, all_reactions)
-    return _COMPLEX_CACHE[task_id]
+        _COMPLEX_CACHE[key] = build_complex_cache(MODEL, all_reactions)
+    return _COMPLEX_CACHE[key]
 
 
-def get_flux(task_id: str, route_id: int, reactions: frozenset[str]) -> dict[str, float]:
+def get_flux(source: str, task_id: str, route_id: int, reactions: frozenset[str]) -> dict[str, float]:
     """A route's flux never depends on any sample, so it's looked up from
     the routes DB first (persisted at enumeration time, or by an earlier
     visualizer request -- see `mteapy.routes.load_route_fluxes`/
@@ -118,7 +144,7 @@ def get_flux(task_id: str, route_id: int, reactions: frozenset[str]) -> dict[str
     back to solving the LP fresh, immediately saving the result so that
     solve never has to happen again for this route, even across server
     restarts."""
-    key = (task_id, route_id)
+    key = (source, task_id, route_id)
     if key in _FLUX_CACHE:
         return _FLUX_CACHE[key]
 
@@ -127,18 +153,19 @@ def get_flux(task_id: str, route_id: int, reactions: frozenset[str]) -> dict[str
         _FLUX_CACHE[key] = stored
         return stored
 
-    task = get_task(task_id)
+    task = get_task(source, task_id)
     fluxes = compute_route_fluxes(MODEL, task, set(reactions))
     save_route_fluxes(DB, route_id, fluxes)
     _FLUX_CACHE[key] = fluxes
     return fluxes
 
 
-def get_boundary_ids(task_id: str) -> tuple[set[str], set[str]]:
-    if task_id not in _BOUNDARY_CACHE:
-        task = get_task(task_id)
-        _BOUNDARY_CACHE[task_id] = resolve_boundary_ids(task, MET_LOOKUP)
-    return _BOUNDARY_CACHE[task_id]
+def get_boundary_ids(source: str, task_id: str) -> tuple[set[str], set[str]]:
+    key = (source, task_id)
+    if key not in _BOUNDARY_CACHE:
+        task = get_task(source, task_id)
+        _BOUNDARY_CACHE[key] = resolve_boundary_ids(task, MET_LOOKUP)
+    return _BOUNDARY_CACHE[key]
 
 
 def get_dataset(dataset_id: str) -> pd.DataFrame:
@@ -188,13 +215,14 @@ async def api_scores(dataset_id: str, sample: str):
 
     results = []
     for row in list_tasks(DB, MODEL_ID):
-        task_id = row["task_id"]
-        if task_id not in TASKS_BY_ID:
-            continue  # a route exists but this task id isn't in the parsed task file
-        routes = get_routes(task_id)
-        complex_cache = get_complex_cache(task_id, routes)
+        source, task_id = row["source"], row["task_id"]
+        if task_id not in _tasks_for_source(source):
+            continue  # a route exists but this task id isn't in that source's parsed task file
+        routes = get_routes(source, task_id)
+        complex_cache = get_complex_cache(source, task_id, routes)
         report = score_task(routes, complex_cache, gene_dict, task_id=task_id)
         results.append({
+            "source": source,
             "task_id": task_id,
             "description": row["description"],
             "n_routes": row["n_routes"],
@@ -206,35 +234,73 @@ async def api_scores(dataset_id: str, sample: str):
     return {"sample": sample, "results": results}
 
 
-@app.get("/api/datasets/{dataset_id}/network/{task_id}")
-async def api_network(dataset_id: str, task_id: str, sample: str):
-    df = get_dataset(dataset_id)
-    if sample not in df.columns:
-        raise HTTPException(400, f"Unknown sample {sample!r}; available: {list(df.columns)}")
-    gene_dict = df[sample].to_dict()
+MAX_TOPOLOGY_PANELS = 15
 
-    task = get_task(task_id)
-    routes = get_routes(task_id)
+
+@app.get("/api/tasks/{source}/{task_id}/network")
+async def api_network(source: str, task_id: str, dataset_id: str | None = None, sample: str | None = None):
+    """A task's route network. With no `dataset_id`/`sample`, scores every
+    route against an empty signal (gene_dict={}) -- every reaction reports
+    `no_evidence`/`no_gpr` and every route ties at score 0, which means
+    `score_task` returns *all* routes as "winning": exactly the plain
+    topology view (every enumerated route variant, no data-driven
+    winner) this mode is for. The frontend distinguishes this from a real
+    all-tied result by simply not having asked for a sample.
+
+    That all-tied set is capped at `MAX_TOPOLOGY_PANELS`: a task can have
+    up to ~100 enumerated routes, and building each one's network graph
+    means a flux solve on first view (`get_flux`'s cache miss path) --
+    rendering all of them eagerly, synchronously, inside one request would
+    both be a poor "browse the routes" UX (100 tabs to click through) and,
+    worse, block this single-process server's event loop for the whole
+    fallback-solve duration, freezing every other request (including
+    trivial ones) until it finishes. A real scored result never hits this
+    cap in practice (ties over genuine evidence are rare -- see
+    docs/GTEX_ROUTE_SCORING_FINDINGS.md), so this only ever bites the
+    topology-only, no-sample case."""
+    if (dataset_id is None) != (sample is None):
+        raise HTTPException(400, "dataset_id and sample must be given together, or both omitted")
+
+    if dataset_id is not None:
+        df = get_dataset(dataset_id)
+        if sample not in df.columns:
+            raise HTTPException(400, f"Unknown sample {sample!r}; available: {list(df.columns)}")
+        gene_dict = df[sample].to_dict()
+    else:
+        gene_dict = {}
+
+    task = get_task(source, task_id)
+    routes = get_routes(source, task_id)
     if not routes:
-        raise HTTPException(404, f"No enumerated routes for task {task_id!r}")
-    complex_cache = get_complex_cache(task_id, routes)
+        raise HTTPException(404, f"No enumerated routes for task {task_id!r} (source {source!r})")
+    complex_cache = get_complex_cache(source, task_id, routes)
     report = score_task(routes, complex_cache, gene_dict, task_id=task_id)
-    input_ids, output_ids = get_boundary_ids(task_id)
+    input_ids, output_ids = get_boundary_ids(source, task_id)
+
+    shown_route_ids = report.winning_route_ids
+    truncated = False
+    if dataset_id is None and len(shown_route_ids) > MAX_TOPOLOGY_PANELS:
+        shown_route_ids = shown_route_ids[:MAX_TOPOLOGY_PANELS]
+        truncated = True
 
     panels = []
-    for route_id in report.winning_route_ids:
+    for route_id in shown_route_ids:
         reactions = routes[route_id]
-        fluxes = get_flux(task_id, route_id, reactions)
+        fluxes = get_flux(source, task_id, route_id, reactions)
         graph = build_route_graph(MODEL, set(reactions), gene_dict, fluxes,
                                    MET_BIGG, RXN_BIGG, input_ids, output_ids)
         panels.append({"route_id": route_id, **graph})
 
     return {
+        "source": source,
         "task_id": task_id,
         "task_description": task.description,
         "tissue": sample,
+        "has_data": dataset_id is not None,
         "score": report.score,
         "is_complete": report.is_complete,
+        "n_routes_total": len(report.winning_route_ids),
+        "truncated": truncated,
         "panels": panels,
     }
 
