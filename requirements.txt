@@ -1,9 +1,15 @@
 numpy
 pandas
-cobra=>0.25.0
+cobra>=0.25.0
 argparse
 rich_argparse
 # Not yet on PyPI -- private repo, requires SSH access. Once published,
 # this line can go back to a bare "cobra-netgraph".
 cobra-netgraph @ git+ssh://git@github.com/migp11/cobra-netgraph.git
 pytest
+
+# For webapp/ (the local visualizer) -- not needed to use mteapy as a library.
+fastapi
+uvicorn
+python-multipart
+
