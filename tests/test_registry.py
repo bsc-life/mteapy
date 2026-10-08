@@ -135,6 +135,15 @@ def test_task_list_missing_from_database_or_with_different_hash_is_flagged(toy_m
     assert any("ToyTasks" in p and "hash differs" in p for p in entry.problems)
 
 
+def test_git_lfs_pointer_instead_of_database_says_how_to_fix_it(toy_model, tmp_path):
+    directory = _make_model_folder(tmp_path, toy_model)
+    (directory / "routes.db").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:" + b"0" * 64 + b"\nsize 123\n")
+    [entry] = registry.discover_models([str(tmp_path)])
+    assert not entry.available
+    assert any("git lfs pull" in p for p in entry.problems)
+
+
 def test_missing_database_is_flagged(toy_model, tmp_path):
     directory = _make_model_folder(tmp_path, toy_model)
     (directory / "routes.db").unlink()

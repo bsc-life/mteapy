@@ -23,12 +23,23 @@ To install MTEApy, you can install it using `pip`:
 pip install mteapy
 ```
 
-Or you can download this repository and install it locally, again using `pip`:
+Or you can download this repository and install it locally, again using `pip`.
+The bundled Human-GEM route database (`routes.db`, 33 MB) is stored with
+[Git LFS](https://git-lfs.com), so install `git-lfs` (e.g. `sudo apt install git-lfs`) *before* cloning:
 
 ```sh
+git lfs install
 git clone https://github.com/bsc-life/mteapy/
-pip install -e mteapy/
+pip install -e "mteapy/[webapp]"     # drop [webapp] if you only need the CLI/library
+run-mtea models list                 # Human-GEM-2.0.1 should be listed without "[unusable]"
 ```
+
+If the model is listed as unusable with "is a Git LFS pointer", the clone was made without
+`git-lfs`: install it and run `git lfs pull` inside the repository.
+
+The `cobra-netgraph` dependency is not on PyPI yet and is fetched from its GitHub repository
+over SSH, so that access is needed for now. The local visualizer is started with
+`cd webapp && python -m uvicorn server:app` (see `webapp/README.md`).
 
 ## **Overview**
 

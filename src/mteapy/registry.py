@@ -172,6 +172,9 @@ def _entry_from_manifest(directory: str) -> ModelEntry:
 
     if not os.path.isfile(db_path):
         problems.append(f"database not found: {manifest['database']['file']}")
+    elif _is_lfs_pointer(db_path):
+        problems.append(f"database {manifest['database']['file']} is a Git LFS pointer, not the data: "
+                        f"install git-lfs and run `git lfs install && git lfs pull` in the repository")
     else:
         try:
             conn = taskdb.connect(db_path)
@@ -228,6 +231,15 @@ def _candidate_directories(path: str) -> list[str]:
         return []
     return [os.path.join(path, d) for d in sorted(os.listdir(path))
             if os.path.isfile(os.path.join(path, d, MANIFEST_NAME))]
+
+
+def _is_lfs_pointer(path: str) -> bool:
+    """A file checked out without git-lfs is a ~130-byte text stub, not the real data."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(64).startswith(b"version https://git-lfs")
+    except OSError:
+        return False
 
 
 def discover_models(search_paths=None) -> list[ModelEntry]:
