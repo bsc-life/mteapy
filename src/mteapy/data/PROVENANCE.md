@@ -19,11 +19,11 @@ the newer generation doesn't try to reproduce the older one's numbers.
 
 ## Context-aware scoring generation (newer)
 
-`HumanGEM_v201.xml`, `routes_human2.db`.
+`models/HumanGEM/HumanGEM_v201.xml`, `models/HumanGEM/routes.db` (the whole folder is described by its `manifest.json`).
 
-- sha256(`HumanGEM_v201.xml`) = `6ce49b620391f0ad76be24fdbdfc884fa376ff534dd3813c95abbe9d8c66fa5e`
+- sha256(`models/HumanGEM/HumanGEM_v201.xml`) = `6ce49b620391f0ad76be24fdbdfc884fa376ff534dd3813c95abbe9d8c66fa5e`
   (12877 reactions, 2848 genes -- this exact hash is also recorded in
-  `routes_human2.db`'s own `models` table, so the database's routes are
+  `models/HumanGEM/routes.db`'s own `models` table, so the database's routes are
   independently verifiable as having been computed against this file and
   no other).
 - Filename intent: corresponds to Human-GEM's `v2.0.1` release. This
@@ -36,21 +36,18 @@ the newer generation doesn't try to reproduce the older one's numbers.
   structural parse bug", "Fix task 90 and 148 structural parse bugs in
   CellFie task list"). The exact commit this XML was originally exported
   from is not retrievable after the fact.
-- `routes_human2.db` additionally has a `task_sources` table
-  (`mteapy.routes.register_task_source`/`get_task_source`) recording,
-  per `source` label (e.g. `"full"`, `"cellfie_consensus"`), the exact
-  task-list file path, its sha256, and (when available) the origin repo
-  URL and git commit it was read from. This is populated automatically
-  by `run-mtea tasks enumerate-routes` on every run, and flags
-  (with a warning) if a `source`'s task-list file content has changed
-  since it was last recorded -- catching task-list drift that
-  `tasks.definition_hash` alone (per-task, not per-file) wouldn't.
+- `models/HumanGEM/routes.db` is a schema-v2 task + route database
+  (`mteapy.taskdb`): its `task_lists` table records, per list (e.g.
+  `HumanGEM-Full`, `CellFie`), the exact task-list file path, its sha256,
+  and (when available) the origin repo URL and git commit it was read
+  from -- populated automatically by `run-mtea tasks import`. The task
+  definitions themselves are stored in the database.
 
 ## Going forward
 
 Any future regeneration of the bundled model/routes DB should record, at
 minimum, the exporting script's own `git rev-parse HEAD` (of whichever
 repo the source model came from) at export time -- exactly what
-`run-mtea tasks enumerate-routes`'s `_git_provenance()` helper does
+`run-mtea tasks import`'s `_git_provenance()` helper does
 automatically for the task-list file already. Retrofit the model export
 step the same way if it's ever automated.

@@ -1,1 +1,1 @@
-src/mteapy/data/routes_human2.db filter=lfs diff=lfs merge=lfs -text
+src/mteapy/data/models/*/*.db filter=lfs diff=lfs merge=lfs -text

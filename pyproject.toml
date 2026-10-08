@@ -43,3 +43,5 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "mteapy.data" = ["*"]
+# Per-model folders (manifest, model, routes database, task files, annotations).
+"mteapy" = ["data/models/*/*", "data/models/*/*/*"]

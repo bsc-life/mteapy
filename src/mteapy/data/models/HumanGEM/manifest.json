@@ -1,0 +1,38 @@
+{
+  "manifest_version": 1,
+  "name": "Human-GEM",
+  "version": "2.0.1",
+  "description": "Human-GEM v2.0.1 genome-scale human metabolic model with its metabolic task lists and the enumerated alternate routes (with fluxes) for each task.",
+  "license": "CC-BY-4.0",
+  "origin": {
+    "repo": "https://github.com/SysBioChalmers/Human-GEM",
+    "note": "SBML exported via COBRApy; task lists from the bsc-life/Human-GEM fork (see src/mteapy/data/PROVENANCE.md)"
+  },
+  "gene_id_type": "ensembl",
+  "model": {
+    "file": "HumanGEM_v201.xml",
+    "format": "sbml",
+    "sha256": "6ce49b620391f0ad76be24fdbdfc884fa376ff534dd3813c95abbe9d8c66fa5e"
+  },
+  "database": {
+    "file": "routes.db"
+  },
+  "task_lists": [
+    {
+      "name": "HumanGEM-Full",
+      "file": "tasks/metabolicTasks_Full.txt",
+      "sha256": "8adf5a8680debdfea58c146859a1404b59260822028854978e3d5efecadd3e88",
+      "description": "Human-GEM's full metabolic task list (257 tasks); tasks 31, 32, 77-97 and 99 carry corrected bounds, task 246 is flagged invalid."
+    },
+    {
+      "name": "CellFie",
+      "file": "tasks/metabolicTasks_CellfieConsensus.txt",
+      "sha256": "d187aca0feba3ec0075f1edd23fb6ea4b78c44407b746b5193fc1ca77fa92459",
+      "description": "The CellFie consensus task list curated for Human-GEM (193 tasks)."
+    }
+  ],
+  "annotations": {
+    "metabolites": "annotations/metabolites.tsv",
+    "reactions": "annotations/reactions.tsv"
+  }
+}
