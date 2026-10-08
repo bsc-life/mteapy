@@ -22,10 +22,9 @@ dependencies = [
     "numpy",
     "pandas",
     "cobra>=0.25.0",
-    "argparse",
     "rich_argparse",
-    "cobra-netgraph",
-    "pytest"
+    # Not yet on PyPI -- private repo, needs SSH access. Once published, make this a bare "cobra-netgraph".
+    "cobra-netgraph @ git+ssh://git@github.com/migp11/cobra-netgraph.git",
 ]
 
 [project.scripts]
@@ -36,7 +35,9 @@ run-mtea = "mteapy.cmds.run_mtea:main"
 "Bug Tracker" = "https://github.com/bsc-life/mteapy/issues"
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "httpx"]
+# The local visualizer in webapp/ (not needed to use mteapy as a library or CLI).
+webapp = ["fastapi", "uvicorn", "python-multipart"]
 
 [tool.setuptools]
 include-package-data = true
