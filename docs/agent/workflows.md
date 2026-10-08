@@ -48,44 +48,95 @@ source venv/bin/activate
 pytest -q
 ```
 
-152 tests expected to pass as of the current feature branch state.
+182 tests expected to pass as of the current feature branch state.
 
 ## Running the CLI
 
 ```sh
 # TAS, context-aware, min aggregation (default), full task list:
 run-mtea analyze TAS expr.tsv --gene_col geneID \
-    --mapping-strategy context-aware --routes-source full
+    --mapping-strategy context-aware --task-list HumanGEM-Full
 
 # TAS, classic (single fixed reaction set per task):
 run-mtea analyze TAS expr.tsv --gene_col geneID --mapping-strategy classic
 
 # CellFie, context-aware:
 run-mtea analyze CellFie expr.tsv --gene_col geneID \
-    --mapping-strategy context-aware --routes-source full
+    --mapping-strategy context-aware --task-list HumanGEM-Full
 
 # TIDE (always needs a differential-expression file, not raw expression):
 run-mtea analyze TIDE dea.tsv --lfc_col log2FoldChange
 ```
 
-`--routes-source` must be an actual `source` registered in the routes
-database -- use `--routes-source full` or `--routes-source
-cellfie_consensus_gurobi` for the two currently-registered task-list
-families (see `architecture.md`).
+`--task-list` must be a task list stored in the database
+(`HumanGEM-Full` is the default; `CellFie` is the other currently stored).
+`--routes-db`/`--routes-model-file` select another database/model; the
+model file's sha256 must match the one the database was built against.
 
-## Enumerating routes for a task list
+## Models: listing, adding, and the manifest
 
 ```sh
-run-mtea tasks enumerate-routes path/to/task_list.txt \
-    --source <label> --task-list {full,cellfie} --solver gurobi \
-    --max-routes 100 --mode {reset,resume}
+run-mtea models list          # every model found, its task lists, and any problems
+run-mtea analyze TAS expr.tsv ... --mapping-strategy context-aware --model Human-GEM-2.0.1
+```
+
+Models are found under `$MTEAPY_MODELS` (os.pathsep-separated) if set, else
+`~/.mteapy/models` plus the bundled `src/mteapy/data/models/`. `--model` takes a
+key or a model folder; `--routes-db` / `--routes-model-file` override its halves.
+
+A model is a folder -- see `mteapy/registry.py`'s docstring for the full
+`manifest.json` format:
+
+```
+MyModel/
+  manifest.json      name, version, model/database files, sha256s, task lists, annotations
+  model.xml          the SBML model
+  routes.db          schema-v2 task/route database (built with `tasks import` + `enumerate-routes`)
+  tasks/*.txt        the task files the database was imported from
+  annotations/*.tsv  optional BiGG/EC tables (metabolites.tsv, reactions.tsv)
+```
+
+To add a model: build `routes.db` (next section), copy the model and task files
+in, write the manifest (sha256 of the model file and each task file; the task-list
+names must match the ones imported), then `run-mtea models list` -- it reports
+any mismatch (modified model file, database built against another model, a
+task list whose hash differs from the one the database was imported from).
+New packaged files need a `[tool.setuptools.package-data]` pattern in
+`pyproject.toml` (the bundled folder already has one); verify with
+`pip wheel . --no-deps --no-build-isolation`.
+
+## Building / extending the task + route database
+
+```sh
+# 1. Store a task list (validated against the model; creates the DB if needed).
+run-mtea tasks import path/to/task_list.txt --task-list HumanGEM-Full \
+    --model-name Human-GEM --model-version 2.0.1 --db new.db
+
+# 2. Enumerate routes (with fluxes) for every valid task of that list.
+run-mtea tasks enumerate-routes --task-list HumanGEM-Full --db new.db \
+    --solver gurobi --max-routes 100 --mode {reset,resume}
 ```
 
 `--mode resume` skips tasks already proven exhaustive and seeds new
-search from existing routes for the rest; refuses to resume a task whose
-definition changed since those routes were found. `--mode reset` wipes
-existing routes for that `(source, model)` first -- it prompts for
-confirmation unless `--yes` is passed, since it's destructive.
+search from existing routes for the rest. `--mode reset` wipes that
+task list's routes first and prompts unless `--yes`. Tasks flagged
+invalid at import are skipped. Task lists are immutable: to change a
+task, edit the file and import it under a new list name.
+
+Results computed elsewhere (e.g. the MN5 greasy jobs' one-JSON-per-task
+output, which has route supports only):
+
+```sh
+python -m mteapy.cmds.import_routes new.db HumanGEM_v201.xml \
+    --task-list HumanGEM-Full --json-dir results/<dir> \
+    --solver-label cplex --processes 8
+```
+
+Converting a legacy (schema v1) database: `python -m
+mteapy.cmds.migrate_db OLD.db MODEL.xml NEW.db --model-name ...
+--task-list NAME:OLD_SOURCE:TASK_FILE:SOLVER[:LEGACY_TASK_FILE]` -- see
+its docstring (routes are carried over only if their task definition
+hasn't changed).
 
 ## Running the webapp
 
@@ -95,7 +146,8 @@ source ../venv/bin/activate
 python -m uvicorn server:app --port 8765
 ```
 
-Then open `http://127.0.0.1:8765/` (or `ssh -L 8765:localhost:8765
+`MTEAPY_MODELS=<model folder or dir of them>` makes it look for models elsewhere than the bundled
+ones. Then open `http://127.0.0.1:8765/` (or `ssh -L 8765:localhost:8765
 <host>` from a remote machine, then open it locally). The server loads
 the model and routes database once at startup, which takes a few
 seconds -- wait for `Ready: model_id=...` in its log before expecting
@@ -125,6 +177,6 @@ seconds -- wait for `Ready: model_id=...` in its log before expecting
 
 ## Git LFS
 
-`src/mteapy/data/routes_human2.db` is LFS-tracked. On a fresh clone:
+`src/mteapy/data/models/*/routes.db` is LFS-tracked. On a fresh clone:
 `git lfs install` (once per machine) before cloning, or `git lfs pull`
 after an already-done clone that only got the pointer stub.

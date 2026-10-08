@@ -1,42 +1,71 @@
 # Current state
 
-Last updated: 2026-10-06, end of the session that added TAS and moved
-this repo to its own independent dev venv.
+Last updated: 2026-10-07, end of the session that moved everything to the
+schema-v2 task/route database, added the model-folder/manifest registry, and
+started the GUI's analysis panel.
 
 ## Branch status -- read this first
 
 Active development is on **`feature/context-aware-scoring`**, pushed to
-`origin/feature/context-aware-scoring`, clean (nothing uncommitted except
-a local-only DB backup file, see below). It is **33 commits ahead of
-`main`** and **not yet merged**. `main` is at commit `5e3c003` ("Add
-__init__.py to fix namespace-package leakage") -- it does *not* have TAS,
-the `task_list` grouping, the webapp source-mixing fix, the CellFie bug
-fixes, or the route-database schema additions. If you're asked to "check
-out mteapy" or "use the latest", that almost certainly means the feature
-branch, not `main` -- confirm which one the task actually needs.
-
-No decision has been made yet about merging. Don't merge unilaterally;
-ask first.
+`origin/feature/context-aware-scoring` as of the previous session's last commit
+(`745b0d6`) -- **everything described under "This session" below is
+UNCOMMITTED in the working tree** (the user commits; don't commit unasked).
+`main` is still at `5e3c003` and has none of the feature branch's work; no
+decision has been made about merging (the user floated merging to a
+`development` branch first, then branching the refactor off it). Don't merge
+unilaterally; ask first.
 
 ## Test suite
 
-152 tests passing (`pytest` from repo root with the dev venv active).
+182 tests passing (`pytest` from repo root with the dev venv active).
 
-## What's new this session (on the feature branch)
+## This session (uncommitted)
 
-- **TAS** (`compute_TAS`, `run-mtea analyze TAS`) -- see `decisions.md`.
-- **`task_sources.task_list`** grouping + retirement of the duplicate
-  `cellfie_consensus` source -- see `decisions.md`.
-- **Webapp**: fixed cross-source task mixing (every lookup now keyed by
-  `(source, task_id)`), added the no-data "show topology only" mode,
-  fixed a stale hardcoded GTEx example-dataset path.
-- **18 `full`-list tasks** that were stuck at zero routes now have a
-  pFBA-only reference route (`truncated=True`) -- see `decisions.md`.
-- **Two CellFie algorithm fixes** (percentile-space, missing-gene
-  propagation) -- see `decisions.md`. Extensive new test coverage for both.
-- Git LFS set up for `routes_human2.db`, including a full consented
-  history rewrite (both `main` and the feature branch affected).
-- Namespace-package bug fixed (`__init__.py` added) on both branches.
+- **Schema v2** (`mteapy.taskdb`): self-contained per-model DB -- model
+  entities by integer key, named task lists with full task definitions,
+  routes + fluxes (`flux NOT NULL`). Legacy `routes.py` removed; legacy DBs
+  convert with `cmds/migrate_db.py` (verified: all 17,616 routes/fluxes
+  identical, TAS scores identical through the CLI). See `architecture.md`.
+- **CLI**: `tasks import`, `tasks enumerate-routes --task-list`, `models list`,
+  `--model` / `--task-list` on `analyze`; `cmds/import_routes.py` loads MN5
+  greasy JSON (supports only) and solves fluxes on route-restricted
+  submodels (`network.compute_route_fluxes_submodel`, ~1000x faster).
+- **Model folder + manifest registry** (`mteapy.registry`): the bundled model
+  is `src/mteapy/data/models/HumanGEM/` (manifest, model, `routes.db`, task
+  files, annotations); packaged via `pyproject.toml` package-data (verified by
+  building a wheel). `.gitattributes` LFS pattern changed to
+  `src/mteapy/data/models/*/*.db`.
+- **24 "Full" task bounds corrected** (31, 32, 77-97, 99) in the Human-GEM
+  checkout's `metabolicTasks_Full.txt` (uncommitted there too, on branch
+  `fix/task-90-148-curation`); task 246 flagged `INVALID:` -- see `decisions.md`.
+- **Webapp**: model + task-list selectors (per-model contexts), hideable
+  panels, an Analysis bar (method + generated parameter form + Run with
+  progress/cancel, scoring all samples in a worker). TAS only; see
+  `architecture.md`/`webapp/README.md`.
+- `mteapy.methods`: one declarative spec per method shared by CLI and GUI.
+
+## Pending -- do these next
+
+- **Task 31 (fructose degradation)**: MN5 job 47042151 hit the 6000 s cap with
+  0 routes (`timeout`, truncated; locally feasible, 46 reactions). The user
+  deferred it for later revision -- no routes stored, not to be papered over
+  with a pFBA-only route without asking.
+- **12 imported tasks have fewer than 100 distinct routes** (77, 78, 81, 83-86,
+  88, 90, 91, 93, 95): the MN5 output repeated supports. The DB holds only the
+  distinct ones (UNIQUE hash), and their `enumeration_runs` rows are now
+  `truncated=1, hit_cap=0`. Decision: do not recompute for now; a repeating
+  enumerator is probably solver numerical noise leaving a cut unapplied.
+  `record_enumeration_result` now warns and records `truncated` whenever a
+  batch contains repeated supports.
+- **GUI**: TAS and CellFie in the methods registry; save/load results done
+  (see `webapp/README.md`); TIDE later (needs DE input and permutations).
+  Classic mapping via route 0 needs an explicit `route_rank` column first (see
+  `decisions.md`).
+- **Servers**: an older copy of the webapp may still be running on port 8765
+  from before this refactor -- restart it to pick up the new code.
+- The MN5 pipeline (`csmemo`-based `run_one_task.py`) saves route supports
+  only; porting it to `mteapy.enumeration` (which returns fluxes) would
+  remove the re-solve in `import_routes`.
 
 ## Known gaps / open questions
 
@@ -50,9 +79,6 @@ ask first.
   side** (e.g. two different conditions' expression for the same
   tissue). Came up while using the webapp to explore an external
   analysis's results; not built, no decision made on whether to build it.
-- A DB backup file, `src/mteapy/data/routes_human2.db.bak-pre-timeout-rerun`,
-  sits locally, untracked, from before the 18-task pFBA fill. Safe to
-  delete once that fill is trusted; not currently gitignored or removed.
 - This repo now has its own independent dev venv at `venv/` (Python
   3.10, built from `requirements.txt` + `pip install -e . --no-deps` +
   `gurobipy`/`python-libsbml`/`jupyterlab`/`ipykernel`; kernel name

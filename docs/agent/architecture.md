@@ -32,9 +32,17 @@ shared by all three.
 
 ```
 src/mteapy/
-  routes.py          SQLite routes database: models, tasks, task_sources,
-                      enumeration_runs, routes, route_reactions. See
-                      "Routes database schema" below.
+  registry.py        Model registry: finds model folders by their
+                      manifest.json, integrity-checks them (file hashes,
+                      database built against this model), resolves a key or
+                      path to a `ModelEntry`. Nothing model-specific is
+                      hard-coded elsewhere.
+  methods.py         Declarative scoring-method specs (parameters, defaults,
+                      choices, help) -- the CLI and the GUI both render from
+                      it (TAS now).
+  taskdb.py          Self-contained task + route database (schema v2): model
+                      entities, task lists/tasks, routes + fluxes. See
+                      "Task + route database" below.
   enumeration.py      Alternate-route enumeration (the recursive MILP).
   complexes.py        GPR -> candidate-complex decomposition.
   context_scoring.py  The context-aware scoring engine: assess_reaction,
@@ -58,10 +66,13 @@ src/mteapy/
   cmds/
     run_mtea.py        `run-mtea analyze {TIDE,CellFie,TAS}` dispatch.
     enumerate_routes.py `run-mtea tasks enumerate-routes` -- builds/extends
-                        the routes database.
-  data/               Bundled HumanGEM_v201.xml, routes_human2.db (LFS),
-                      HumanGEM.xml.gz (older, see version-mismatch note
-                      below), task_structure_matrix.tsv, task_metadata.tsv.
+                        the task/route database (`tasks import`, `tasks enumerate-routes`).
+  data/models/HumanGEM/  The bundled model folder: manifest.json,
+                      HumanGEM_v201.xml, routes.db (LFS), tasks/*.txt,
+                      annotations/*.tsv.
+  data/               Also HumanGEM.xml.gz (older, see version-mismatch note
+                      below), task_structure_matrix.tsv, task_metadata.tsv,
+                      essential-genes tables -- the classic/TIDE path's inputs.
 webapp/
   server.py           FastAPI app: task listing, dataset upload, live
                       scoring, route-network JSON for the frontend.
@@ -71,46 +82,60 @@ tests/                 pytest; toy_model fixture pattern for fast,
                       tests that load the real bundled model.
 ```
 
-## Routes database schema (`mteapy.routes`)
+## Task + route database (`mteapy.taskdb`, schema v2)
 
-- `models(model_id, path, sha256, n_reactions, n_genes, ...)` -- one row
-  per distinct model file content (keyed by hash, not path).
-- `tasks(source, task_id, description, definition_hash)` -- one row per
-  (source, task_id); `definition_hash` lets `--mode resume` detect a
-  task definition that changed since routes were last found for it.
-- `task_sources(source, task_list, file_path, sha256, origin_repo,
-  origin_ref, recorded_at)` -- provenance per `source`, plus `task_list`
-  grouping multiple sources under one logical family (e.g. a
-  solver-comparison re-run) so a caller can select "the cellfie task
-  list" without knowing which specific `source` currently backs it. See
-  `get_sources_for_task_list`/`register_task_source`. Optional fields use
-  `COALESCE` in their upsert so a caller omitting one never silently
-  erases a previously-recorded value -- **follow this pattern for any
-  new optional column you add here**, it was a real bug once (see
-  `decisions.md`).
-- `enumeration_runs(source, task_id, model_id, status, n_routes,
-  max_routes, hit_cap, truncated, cumulative_time_seconds, last_run_at)`
-  -- one row per (source, task_id, model_id), the latest attempt's
-  summary. `is_exhaustive` (computed, not stored) is `status=='optimal'
-  and not hit_cap and not truncated` -- true only when the solver proved
-  no further alternate route exists.
-- `routes(route_id, source, task_id, model_id, reaction_set_hash,
-  n_reactions, first_seen_at)` / `route_reactions(route_id, reaction_id,
-  flux)` -- the actual enumerated routes, deduplicated by reaction-set
-  hash, with each route's solved flux vector persisted so a later caller
-  (e.g. the webapp's network view) never has to re-solve the LP.
+One self-contained SQLite database per model (`meta.schema_version = 2`;
+`taskdb.connect` refuses anything else and points at `cmds/migrate_db.py`).
+The model XML is *not* embedded -- `models.sha256` pins the exact file
+(`taskdb.verify_model_file`), and every consumer checks it.
 
-Two currently-registered `task_list` families, both against Human-GEM
-v2.0.1: `full` (`source="full"`, 257 tasks) and `cellfie`
-(`source="cellfie_consensus_gurobi"`, 193 tasks -- the non-Gurobi
-`cellfie_consensus` variant was retired, see `decisions.md`).
+- `models`, `reactions(rxn_pk, rxn_id)`, `metabolites(met_pk, met_id, name,
+  compartment)` -- the model's entities, stored once. Everything below
+  references them by integer key, which both shrinks the route tables and
+  lets the importer reject a task that names a metabolite/reaction the
+  model doesn't have.
+- `task_lists(name, model_id, origin_file/sha256/repo/ref, ...)` -- a named
+  task list against a model (`HumanGEM-Full`, `CellFie`). A list's name is
+  the single handle callers select by; there is no separate "source" vs
+  "task_list" notion any more (that split caused the double-counting bug
+  in `decisions.md`).
+- `tasks(task_pk, task_list_id, task_id, description, system, subsystem,
+  should_fail, comments, definition_hash, valid, import_note)` plus child
+  tables `task_inputs`, `task_outputs`, `task_equations` +
+  `task_equation_terms`, `task_changed_bounds`. A task's full definition
+  lives here; the original file is only an import source
+  (`run-mtea tasks import`). `taskdb.load_task` rebuilds a
+  `MetabolicTask` whose `task_definition_hash` equals the stored one
+  (tested). **Task lists are immutable** once imported: to change a task,
+  import the edited file under a new name.
+- A task that fails validation (unresolvable metabolite/reaction,
+  duplicate IN/OUT, or a task-file COMMENTS cell starting `INVALID:`) is
+  stored with `valid = 0` and an `import_note`, without definition rows.
+  Consumers skip it; the DB stays a faithful copy of the list.
+- `enumeration_runs(task_pk, status, n_routes, max_routes, hit_cap,
+  truncated, cumulative_time_seconds, solver, solver_version)` -- latest
+  attempt per task; solver provenance lives here, per task.
+  `is_exhaustive` (computed) is `status=='optimal' and not hit_cap and
+  not truncated`.
+- `routes(route_id, task_pk, reaction_set_hash, n_reactions)` /
+  `route_reactions(route_id, rxn_pk, flux NOT NULL)` (`WITHOUT ROWID`) --
+  deduplicated by reaction-set hash, every route with a solved signed flux
+  for every reaction, so no viewer ever solves an LP.
+  `record_enumeration_result` *requires* the fluxes
+  (`mteapy.enumeration.RouteResult.fluxes`) and refuses a partial dict.
+
+Currently two task lists against Human-GEM v2.0.1: `HumanGEM-Full` (257
+tasks) and `CellFie` (193). Importing results produced elsewhere (e.g.
+MN5 greasy JSON, which carries supports only) goes through
+`cmds/import_routes.py`, which solves the fluxes on a route-restricted
+submodel (`network.compute_route_fluxes_submodel`) first.
 
 ## A known, accepted model-version mismatch
 
 The **classic** mapping-strategy CLI path loads `data/HumanGEM.xml.gz`
 (an older bundled model) and `data/task_structure_matrix.tsv`. The
-**context-aware** path loads whatever model `routes_human2.db` was
-actually enumerated against (`data/HumanGEM_v201.xml`, newer). These are
+**context-aware** path loads whatever model the model folder's `routes.db` was
+actually built against (checked by sha256: `models/HumanGEM/HumanGEM_v201.xml`, newer). These are
 *not* the same model version. This is intentional and already documented
 in `enumerate_routes.py`'s own docstring -- don't "fix" it by silently
 swapping one file for the other; if it ever needs reconciling, that's a
@@ -121,19 +146,40 @@ deliberate decision, not a bug fix.
 Local-only FastAPI app, not part of the installable package. Key things
 that are *not* obvious from a first read:
 
-- Every lookup is keyed by **`(source, task_id)`**, never `task_id`
-  alone -- different sources reuse the same numeric task_id for
-  unrelated tasks. Each source's own task-list file is resolved lazily
-  via `task_sources` (`get_task_source`), not hardcoded.
-- `/api/tasks/{source}/{task_id}/network` makes `dataset_id`/`sample`
+- Every lookup is keyed by **`(task_list, task_id)`**, never `task_id`
+  alone -- different task lists reuse the same numeric task_id for
+  unrelated tasks. Task definitions come from the database
+  (`taskdb.load_task`), not from task files. A task flagged invalid gets
+  a 409 from the network endpoint.
+- `/api/tasks/{task_list}/{task_id}/network` makes `dataset_id`/`sample`
   **optional**. With neither given, every route scores against an empty
   signal, which makes every route tie (score 0.0 everywhere) --
   `score_task` returns *all* tied routes as "winning", which is exactly
   the plain "show me the topology, no data" mode. Capped at
-  `MAX_TOPOLOGY_PANELS` (15) because a task can have ~100 routes and
-  building each one's graph triggers a flux solve on first view;
-  rendering all of them eagerly would block the server's single-threaded
-  event loop for the whole solve duration.
+  `MAX_TOPOLOGY_PANELS` (15): a task can have ~100 routes and building
+  every panel eagerly in one request would hold the single-process
+  server's event loop for the duration. Fluxes are plain DB lookups
+  (nothing is solved at request time).
+- Models come from `mteapy.registry` (a model folder's `manifest.json`,
+  integrity-checked; unusable models are *listed* with their `problems`) and
+  load lazily into a per-model `ModelContext` (model, DB connection,
+  caches). Annotation tables come from the manifest, not a sibling
+  checkout. `MTEAPY_MODELS` overrides where models are looked for.
+- Scoring is a **Run** (`webapp/runs.py`): `POST /api/runs {model,
+  task_list, dataset_id, method, params}` validates against
+  `mteapy.methods`, then scores every task of the list against every
+  sample in a worker thread (`context_scoring.score_tasks_report`);
+  the page polls `GET /api/runs/{id}` for progress and fetches the
+  tasks x samples matrix from `/results`. The worker uses its own DB
+  connection (the handlers' shared one is not thread-safe) and a
+  per-(model, task list) cache of routes + complex cache. The network
+  endpoint takes `run_id` + `sample` and scores with *that run's*
+  parameters so it always matches the table. Results live in memory
+  (last 20 runs); saving/loading them is not built yet.
+- Method parameters are never hard-coded in JS: `GET /api/methods` serves the
+  spec and the Analysis bar renders its form from it.
+- The frontend can hide the data/analysis/legend/task/detail panels
+  (state in `localStorage`).
 - The frontend paints that no-data mode with a neutral fill, not the
   normal evidence colors -- "no evidence" (red) would otherwise read as
   a negative finding instead of "nothing asked yet".

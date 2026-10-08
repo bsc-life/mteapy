@@ -38,7 +38,7 @@ Full context lives in `docs/agent/`, read on demand rather than inline here:
   trailers**, on this repo or any repo the user owns.
 - **Only commit when explicitly asked.** Staging/diffing freely is fine;
   creating the commit is not, even when the change is obviously correct.
-- `src/mteapy/data/routes_human2.db` is **Git LFS**-tracked. A fresh
+- `src/mteapy/data/models/*/routes.db` (the per-model task/route databases) are **Git LFS**-tracked. A fresh
   clone needs `git lfs install` before the real file resolves (otherwise
   you'll silently get a pointer stub, not the database).
 - Don't re-import the original CellFie repo's `.mat` model/task files
