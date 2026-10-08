@@ -10,38 +10,109 @@
 
 let datasetId = null;
 let currentSample = null;
-let allTasks = [];      // [{source, task_id, description, n_routes, score, is_tied, is_complete, winning_route_ids}]
+let currentModel = null;     // model key, e.g. "Human-GEM-2.0.1"
+let currentTaskList = null;  // task list name within that model
+let modelsInfo = [];         // [{key, name, version, available, task_lists: [{name, n_tasks, ...}]}]
+let currentRun = null;       // {run_id, config, samples, byTask: {task_id: {scores, complete, tied}}} once a run is done
+let methodsInfo = [];        // [{id, label, description, params: [{name, label, type, default, help, choices}]}]
+let allTasks = [];      // [{task_id, description, n_routes, score, is_tied, is_complete, winning_route_ids}]
 let sortKey = "task_id";
 let sortAsc = true;
-let selectedKey = null; // `${source}::${task_id}`
+let selectedKey = null; // task_id within the current model/task list
 let currentData = null; // {task_id, task_description, tissue, has_data, panels: [...]}
 let currentIndex = 0;
 let orientation = "TB";
 
-function rowKey(t) { return `${t.source}::${t.task_id}`; }
+function rowKey(t) { return t.task_id; }
 
 const statusMsg = document.getElementById("status-msg");
 const sampleSelect = document.getElementById("sample-select");
 const taskTbody = document.getElementById("task-tbody");
 const taskSearch = document.getElementById("task-search");
+const modelSelect = document.getElementById("model-select");
+const taskListSelect = document.getElementById("tasklist-select");
 
 function setStatus(text) { statusMsg.textContent = text; }
 
 // ---------- bootstrapping ----------
 
-async function loadTaskList() {
-  const res = await fetch("/api/tasks");
+async function loadModels() {
+  const res = await fetch("/api/models");
   const data = await res.json();
-  allTasks = data.tasks.map(t => ({ ...t, score: null, is_tied: false, is_complete: false, winning_route_ids: [] }));
+  modelsInfo = data.models;
   window.GTEX_DATASET_ID = data.gtex_dataset_id;
-  renderTaskTable();
+  modelSelect.innerHTML = "";
+  modelsInfo.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m.key;
+    opt.textContent = (m.version ? `${m.name} ${m.version}` : m.name) + (m.available ? "" : " (unusable)");
+    opt.title = m.available ? (m.description || "") : m.problems.join("; ");
+    opt.disabled = !m.available;
+    modelSelect.appendChild(opt);
+  });
+  const first = modelsInfo.find(m => m.available);
+  if (!first) {
+    const why = modelsInfo.flatMap(m => m.problems).join("; ");
+    setStatus("No usable model found" + (why ? `: ${why}` : " (see the server log)."));
+    return;
+  }
+  modelSelect.disabled = false;
+  modelSelect.value = first.key;
+  await onModelChange();
 }
+
+async function onModelChange(preferredTaskList = null) {
+  currentModel = modelSelect.value;
+  const info = modelsInfo.find(m => m.key === currentModel);
+  taskListSelect.innerHTML = "";
+  info.task_lists.forEach(tl => {
+    const opt = document.createElement("option");
+    opt.value = tl.name;
+    opt.textContent = `${tl.name} (${tl.n_tasks_with_routes}/${tl.n_tasks} tasks with routes)`;
+    taskListSelect.appendChild(opt);
+  });
+  taskListSelect.disabled = info.task_lists.length === 0;
+  if (!info.task_lists.length) { allTasks = []; renderTaskTable(); setStatus("This model has no task lists."); return; }
+  // Prefer the first list that actually has routes.
+  const preferred = info.task_lists.find(tl => tl.name === preferredTaskList)
+    || info.task_lists.find(tl => tl.n_tasks_with_routes > 0) || info.task_lists[0];
+  taskListSelect.value = preferred.name;
+  await onTaskListChange();
+}
+
+async function onTaskListChange() {
+  currentTaskList = taskListSelect.value;
+  clearRun();
+  selectedKey = null;
+  currentData = null;
+  document.getElementById("panel-title-text").textContent = "Select a task to render its network";
+  document.getElementById("task-desc").textContent = "";
+  document.getElementById("panel-host").innerHTML = "";
+  setStatus(`Loading ${currentModel} (the first use of a model takes a few seconds)...`);
+  modelSelect.disabled = taskListSelect.disabled = true;
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(currentModel)}/task_lists/${encodeURIComponent(currentTaskList)}/tasks`);
+    if (!res.ok) { setStatus(`Could not load tasks: ${(await res.json()).detail || res.statusText}`); return; }
+    const data = await res.json();
+    allTasks = data.tasks.map(t => ({ ...t, score: null, is_tied: false, is_complete: false, winning_route_ids: [] }));
+    renderTaskTable();
+    setStatus(`${allTasks.length} tasks in ${currentTaskList}.`);
+  } finally {
+    modelSelect.disabled = false;
+    taskListSelect.disabled = false;
+  }
+  updateRunButton();
+}
+
+modelSelect.addEventListener("change", () => onModelChange());
+taskListSelect.addEventListener("change", onTaskListChange);
 
 document.getElementById("load-gtex-btn").addEventListener("click", async () => {
   if (!window.GTEX_DATASET_ID) { setStatus("No bundled GTEx dataset available on this server."); return; }
   datasetId = window.GTEX_DATASET_ID;
   const res = await fetch(`/api/datasets/${datasetId}`);
   const info = await res.json();
+  clearRun();
   populateSampleSelect(info.samples);
   setStatus(`Loaded GTEx example: ${info.samples.length} tissues.`);
 });
@@ -56,6 +127,7 @@ document.getElementById("file-input").addEventListener("change", async (ev) => {
   if (!res.ok) { setStatus(`Upload failed: ${(await res.json()).detail || res.statusText}`); return; }
   const info = await res.json();
   datasetId = info.dataset_id;
+  clearRun();
   populateSampleSelect(info.samples);
   setStatus(`Loaded ${file.name}: ${info.n_genes} genes, ${info.samples.length} sample(s).`);
 });
@@ -69,20 +141,235 @@ function populateSampleSelect(samples) {
   });
   sampleSelect.disabled = false;
   sampleSelect.dispatchEvent(new Event("change"));
+  updateRunButton();
 }
 
-sampleSelect.addEventListener("change", async () => {
-  if (!datasetId || !sampleSelect.value) return;
+sampleSelect.addEventListener("change", () => {
+  if (!sampleSelect.value) return;
   currentSample = sampleSelect.value;
-  setStatus(`Scoring all tasks against ${currentSample}...`);
-  const res = await fetch(`/api/datasets/${datasetId}/scores?sample=${encodeURIComponent(currentSample)}`);
-  if (!res.ok) { setStatus(`Scoring failed: ${(await res.json()).detail || res.statusText}`); return; }
-  const data = await res.json();
-  const byKey = Object.fromEntries(data.results.map(r => [rowKey(r), r]));
-  allTasks = allTasks.map(t => ({ ...t, ...(byKey[rowKey(t)] || {}) }));
-  renderTaskTable();
-  setStatus(`Scored ${data.results.length} tasks against ${currentSample}.`);
+  applyRunScores();
   if (selectedKey) selectTask(selectedKey);
+});
+
+// ---------- analysis: methods, parameters, runs ----------
+
+const methodSelect = document.getElementById("method-select");
+const paramsHost = document.getElementById("method-params");
+const runBtn = document.getElementById("run-btn");
+const cancelBtn = document.getElementById("cancel-btn");
+const runProgress = document.getElementById("run-progress");
+const runStatus = document.getElementById("run-status");
+let activeRunId = null;
+
+function setRunStatus(text, isError = false) {
+  runStatus.textContent = text;
+  runStatus.classList.toggle("err", isError);
+}
+
+async function loadMethods() {
+  const res = await fetch("/api/methods");
+  methodsInfo = (await res.json()).methods;
+  methodSelect.innerHTML = "";
+  methodsInfo.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m.id; opt.textContent = m.label; opt.title = m.description;
+    methodSelect.appendChild(opt);
+  });
+  methodSelect.disabled = methodsInfo.length === 0;
+  renderParams();
+}
+
+function currentMethod() { return methodsInfo.find(m => m.id === methodSelect.value); }
+
+function renderParams() {
+  const m = currentMethod();
+  paramsHost.innerHTML = "";
+  document.getElementById("method-desc").textContent = m ? m.description : "";
+  if (!m) return;
+  m.params.forEach(p => {
+    const wrap = document.createElement("label");
+    wrap.className = "param"; wrap.title = p.help;
+    wrap.append(`${p.label}: `);
+    let input;
+    if (p.type === "choice") {
+      input = document.createElement("select");
+      p.choices.forEach(c => { const o = document.createElement("option"); o.value = o.textContent = c; input.appendChild(o); });
+      input.value = p.default;
+    } else if (p.type === "bool") {
+      input = document.createElement("input"); input.type = "checkbox"; input.checked = !!p.default;
+    } else {
+      input = document.createElement("input"); input.type = "number"; input.value = p.default;
+      input.step = p.type === "int" ? "1" : "any";
+      if (p.min !== null) input.min = p.min;
+      if (p.max !== null) input.max = p.max;
+    }
+    input.dataset.param = p.name; input.dataset.type = p.type;
+    wrap.dataset.when = JSON.stringify(p.when || []);
+    wrap.appendChild(input);
+    paramsHost.appendChild(wrap);
+  });
+  updateParamVisibility();
+}
+
+// A parameter that only matters for some settings of others (e.g. the global
+// threshold value) is shown only while those hold.
+function updateParamVisibility() {
+  const current = collectParams();
+  paramsHost.querySelectorAll(".param").forEach(wrap => {
+    const when = JSON.parse(wrap.dataset.when || "[]");
+    wrap.hidden = !when.every(([name, value]) => current[name] === value);
+  });
+}
+
+function collectParams() {
+  const out = {};
+  paramsHost.querySelectorAll("[data-param]").forEach(el => {
+    out[el.dataset.param] = el.dataset.type === "bool" ? el.checked
+      : (el.dataset.type === "int" || el.dataset.type === "float") ? Number(el.value) : el.value;
+  });
+  return out;
+}
+
+function updateRunButton() {
+  document.getElementById("save-btn").disabled = document.getElementById("tsv-btn").disabled = !currentRun;
+  runBtn.disabled = !(datasetId && currentModel && currentTaskList && currentMethod() && !activeRunId);
+  runBtn.title = datasetId ? "Score every task of the selected list against every sample"
+                           : "Load an expression dataset first";
+}
+
+methodSelect.addEventListener("change", renderParams);
+paramsHost.addEventListener("change", updateParamVisibility);
+
+function clearRun(note) {
+  currentRun = null;
+  allTasks = allTasks.map(t => ({ ...t, score: null, is_tied: false, is_complete: false, winning_route_ids: [] }));
+  renderTaskTable();
+  if (note) setRunStatus(note);
+  else if (!activeRunId) setRunStatus("");
+  updateRunButton();
+}
+
+function applyRunScores() {
+  if (!currentRun || !currentSample) return;
+  const idx = currentRun.samples.indexOf(currentSample);
+  if (idx < 0) return;
+  allTasks = allTasks.map(t => {
+    const r = currentRun.byTask[t.task_id];
+    return r ? { ...t, score: r.scores[idx], is_tied: r.tied[idx], is_complete: r.complete[idx] }
+             : { ...t, score: null, is_tied: false, is_complete: false };
+  });
+  renderTaskTable();
+}
+
+async function startRun() {
+  const m = currentMethod();
+  const body = { model: currentModel, task_list: currentTaskList, dataset_id: datasetId, method: m.id, params: collectParams() };
+  runBtn.disabled = true;
+  setRunStatus("Starting...");
+  const res = await fetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const detail = (await res.json()).detail;
+    setRunStatus(`Could not start: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`, true);
+    updateRunButton();
+    return;
+  }
+  const info = await res.json();
+  activeRunId = info.run_id;
+  cancelBtn.hidden = false;
+  runProgress.hidden = false;
+  currentRun = null;
+  await pollRun(info);
+}
+
+async function pollRun(info) {
+  const runId = info.run_id;
+  for (;;) {
+    runProgress.max = Math.max(info.total, 1);
+    runProgress.value = info.done;
+    setRunStatus(info.status === "queued" ? "Queued..." : `Scoring ${info.done}/${info.total} samples...`);
+    if (info.status !== "queued" && info.status !== "running") break;
+    await new Promise(r => setTimeout(r, 350));
+    const res = await fetch(`/api/runs/${runId}`);
+    if (!res.ok) { setRunStatus("Lost track of the run.", true); break; }
+    info = await res.json();
+  }
+  activeRunId = null;
+  cancelBtn.hidden = true;
+  runProgress.hidden = true;
+  if (info.status === "done") {
+    const res = await fetch(`/api/runs/${runId}/results`);
+    const data = await res.json();
+    currentRun = {
+      run_id: runId, config: info.config, samples: data.samples,
+      byTask: Object.fromEntries(data.tasks.map(t => [t.task_id, t])),
+    };
+    const p = Object.entries(info.config.params).map(([k, v]) => `${k}=${v}`).join(", ");
+    setRunStatus(`${info.config.method} (${p}) done in ${info.seconds}s: ${data.tasks.length} tasks x ${data.samples.length} samples ` +
+                 `(${info.genes_matched} model genes found in the data).`);
+    applyRunScores();
+    if (selectedKey) selectTask(selectedKey);
+  } else if (info.status === "cancelled") {
+    setRunStatus("Run cancelled.");
+  } else {
+    setRunStatus(`Run failed: ${info.error}`, true);
+  }
+  updateRunButton();
+}
+
+// ---------- saving and loading results ----------
+
+function download(url) {
+  const a = document.createElement("a");
+  a.href = url; a.download = "";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+document.getElementById("save-btn").addEventListener("click", () => currentRun && download(`/api/runs/${currentRun.run_id}/export`));
+document.getElementById("tsv-btn").addEventListener("click", () => currentRun && download(`/api/runs/${currentRun.run_id}/export?format=tsv`));
+
+const loadInput = document.getElementById("load-input");
+document.getElementById("load-btn").addEventListener("click", () => loadInput.click());
+loadInput.addEventListener("change", async () => {
+  const file = loadInput.files[0];
+  loadInput.value = "";
+  if (!file) return;
+  setRunStatus(`Loading ${file.name}...`);
+  let bundle;
+  try { bundle = JSON.parse(await file.text()); }
+  catch { setRunStatus(`${file.name} is not a results file (invalid JSON).`, true); return; }
+  const res = await fetch("/api/runs/import", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify(bundle) });
+  if (!res.ok) {
+    const detail = (await res.json()).detail;
+    setRunStatus(`Could not load ${file.name}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`, true);
+    return;
+  }
+  const info = await res.json();
+  const cfg = info.config;
+  // Switch the whole view to what the results were computed on.
+  modelSelect.value = cfg.model;
+  await onModelChange(cfg.task_list);
+  methodSelect.value = cfg.method;
+  renderParams();
+  paramsHost.querySelectorAll("[data-param]").forEach(el => {
+    const v = cfg.params[el.dataset.param];
+    if (el.dataset.type === "bool") el.checked = !!v; else el.value = v;
+  });
+  updateParamVisibility();
+  datasetId = info.dataset_id;
+  const data = await (await fetch(`/api/runs/${info.run_id}/results`)).json();
+  currentRun = { run_id: info.run_id, config: cfg, samples: data.samples,
+                 byTask: Object.fromEntries(data.tasks.map(t => [t.task_id, t])) };
+  populateSampleSelect(data.samples);
+  const p = Object.entries(cfg.params).map(([k, v]) => `${k}=${v}`).join(", ");
+  setRunStatus(`Loaded ${cfg.method} (${p}), saved ${cfg.saved_at || "earlier"}: ${data.tasks.length} tasks x ` +
+               `${data.samples.length} samples.` + (datasetId ? "" : " (No expression to re-run: CellFie results are loaded as scores only.)"));
+  applyRunScores();
+  updateRunButton();
+});
+
+runBtn.addEventListener("click", startRun);
+cancelBtn.addEventListener("click", async () => {
+  if (activeRunId) await fetch(`/api/runs/${activeRunId}`, { method: "DELETE" });
 });
 
 // ---------- task table ----------
@@ -115,7 +402,7 @@ function renderTaskTable() {
 
   taskTbody.innerHTML = "";
   if (!rows.length) {
-    taskTbody.innerHTML = `<tr><td colspan="5" class="placeholder">No matching tasks.</td></tr>`;
+    taskTbody.innerHTML = `<tr><td colspan="4" class="placeholder">No matching tasks.</td></tr>`;
     return;
   }
   for (const t of rows) {
@@ -125,13 +412,12 @@ function renderTaskTable() {
       ? `<span class="placeholder">&mdash;</span>`
       : `<span class="score-pill" style="background:${scorePillColor(t)};">${t.score.toFixed(2)}</span>${t.is_tied ? " tied" : ""}`;
     tr.innerHTML = `
-      <td>${t.source}</td>
       <td>${t.task_id}</td>
       <td>${t.description || ""}</td>
       <td>${t.n_routes}</td>
       <td>${scoreCell}</td>
     `;
-    tr.addEventListener("click", () => selectTask(t.source, t.task_id));
+    tr.addEventListener("click", () => selectTask(t.task_id));
     taskTbody.appendChild(tr);
   }
 }
@@ -142,13 +428,14 @@ function scorePillColor(t) {
   return t.is_complete ? "#d2f0e3" : "#fbe9c9";
 }
 
-async function selectTask(source, taskId) {
-  selectedKey = `${source}::${taskId}`;
+async function selectTask(taskId) {
+  selectedKey = taskId;
   renderTaskTable();
   document.getElementById("panel-title-text").textContent = "Loading...";
-  const hasSample = datasetId && currentSample;
-  const qs = hasSample ? `?dataset_id=${encodeURIComponent(datasetId)}&sample=${encodeURIComponent(currentSample)}` : "";
-  const res = await fetch(`/api/tasks/${encodeURIComponent(source)}/${encodeURIComponent(taskId)}/network${qs}`);
+  const hasSample = currentRun && currentSample;
+  const qs = hasSample ? `?run_id=${encodeURIComponent(currentRun.run_id)}&sample=${encodeURIComponent(currentSample)}` : "";
+  const res = await fetch(`/api/models/${encodeURIComponent(currentModel)}/task_lists/${encodeURIComponent(currentTaskList)}` +
+                          `/tasks/${encodeURIComponent(taskId)}/network${qs}`);
   if (!res.ok) {
     document.getElementById("panel-title-text").textContent = `Error: ${(await res.json()).detail || res.statusText}`;
     return;
@@ -156,7 +443,7 @@ async function selectTask(source, taskId) {
   currentData = await res.json();
   currentIndex = 0;
   document.getElementById("task-desc").textContent = currentData.task_description || "";
-  setStatus(hasSample ? "" : "No sample loaded -- showing all route variants, unscored.");
+  setStatus(hasSample ? "" : "No results yet -- showing all route variants, unscored (run an analysis to score them).");
   showPanel(0);
 }
 
@@ -219,6 +506,7 @@ function renderPanel(container, panel, viewWidth, viewHeight, hasData) {
     orientation,
     viewWidth,
     viewHeight,
+    fitToView: true,
     nodeSize,
     nodeShape: d => d.type === "reaction" ? "rect" : "circle",
     nodeFill: fill,
@@ -361,6 +649,19 @@ const prevBtn = document.getElementById("prev-btn");
 const nextBtn = document.getElementById("next-btn");
 const orientBtn = document.getElementById("orient-btn");
 
+// The network fills the width of its panel (so hiding the side panels gives it
+// room) and the rest of the window's height, but never less than a usable minimum.
+function availableNetworkHeight() {
+  const top = host.getBoundingClientRect().top + window.scrollY;
+  return Math.max(500, Math.round(window.innerHeight - top - 24));
+}
+
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (currentData) showPanel(currentIndex); }, 150);
+});
+
 function showPanel(index) {
   if (!currentData || !currentData.panels.length) return;
   currentIndex = (index + currentData.panels.length) % currentData.panels.length;
@@ -374,7 +675,7 @@ function showPanel(index) {
   titleText.textContent = currentData.panels.length > 1
     ? `Task ${currentData.task_id} — Route ${panel.route_id} ${countLabel} — ${nRxns} reactions`
     : `Task ${currentData.task_id} — Route ${panel.route_id} — ${nRxns} reactions`;
-  renderPanel(host, panel, 1000, 800, currentData.has_data);
+  renderPanel(host, panel, host.clientWidth || 1000, availableNetworkHeight(), currentData.has_data);
   prevBtn.style.visibility = currentData.panels.length > 1 ? "visible" : "hidden";
   nextBtn.style.visibility = currentData.panels.length > 1 ? "visible" : "hidden";
 }
@@ -387,4 +688,35 @@ orientBtn.addEventListener("click", () => {
   if (currentData) showPanel(currentIndex);
 });
 
-loadTaskList();
+// ---------- show / hide panels ----------
+
+const VIEW_PARTS = ["controls", "analysis", "legend", "tasks", "detail"];
+const VIEW_KEYS = { c: "controls", a: "analysis", l: "legend", t: "tasks", d: "detail" };
+const hiddenParts = new Set();
+
+try { (JSON.parse(localStorage.getItem("mteapy.hidden") || "[]")).forEach(p => VIEW_PARTS.includes(p) && hiddenParts.add(p)); }
+catch (e) { /* storage unavailable or corrupt: start with everything shown */ }
+
+function applyView() {
+  VIEW_PARTS.forEach(p => document.querySelector(".wrap").classList.toggle(`hide-${p}`, hiddenParts.has(p)));
+  document.querySelectorAll(".view-toggles button").forEach(b => b.classList.toggle("on", !hiddenParts.has(b.dataset.view)));
+  try { localStorage.setItem("mteapy.hidden", JSON.stringify([...hiddenParts])); } catch (e) { /* ignore */ }
+  if (currentData) showPanel(currentIndex);   // re-fit the network to the new width
+}
+
+function toggleView(part) {
+  if (hiddenParts.has(part)) hiddenParts.delete(part); else hiddenParts.add(part);
+  applyView();
+}
+
+document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => toggleView(b.dataset.view)));
+document.addEventListener("keydown", ev => {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  const part = VIEW_KEYS[ev.key.toLowerCase()];
+  if (part) toggleView(part);
+});
+applyView();
+
+loadMethods().then(updateRunButton);
+loadModels();

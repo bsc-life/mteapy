@@ -14,47 +14,86 @@ column and one or more sample columns.
 
 ```
 cd webapp
-../metabolic-task-builder/.venv/bin/python3 -m uvicorn server:app --reload --port 8765
+../venv/bin/python -m uvicorn server:app --port 8765
 ```
 
 Then open http://127.0.0.1:8765/.
 
-The first request that renders a given task's network takes a few seconds
-per route (an LP solve over the genome-scale model to recover that route's
-flux vector) -- this is cached in memory after that, so re-viewing the same
-task (even against a different sample) is near-instant. Re-scoring all 220
-tasks against a newly picked sample currently takes several seconds too
-(pure arithmetic, but 220 tasks x up to 100 routes each); the whole score
-table is recomputed on every sample change.
+Models come from the registry (`mteapy.registry`): each model folder's
+`manifest.json` names its model file, task/route database and annotation
+tables and is integrity-checked (a model that fails is listed as unusable,
+with the reasons, instead of being hidden). By default the server looks in
+`~/.mteapy/models` and mteapy's bundled models; set `MTEAPY_MODELS` to an
+`os.pathsep`-separated list of model folders (or directories of them) to
+look elsewhere. A model is loaded the first time it is selected -- a few
+seconds -- and kept for the server's lifetime.
+
+Nothing is solved at request time: every route's solved flux is stored in
+the database.
+
+## Using it
+
+- **Model / Task list**: pick a model, then one of its task lists. Task
+  ids are only unique within a list, so lists are never mixed in one table.
+- **Analysis bar**: pick a method (TAS or CellFie), set its parameters (the form is
+  generated from `mteapy.methods`, the same definitions the CLI uses), load a
+  dataset, press **Run**. Every task of the selected list is scored against
+  *every* sample in a background worker (progress bar, Cancel); when it
+  finishes the Score column shows the selected sample, and switching sample is
+  instant. The network view is scored with the run's own parameters. Changing
+  the model, task list or dataset clears the results. CellFie's thresholds
+  are computed over the whole loaded dataset (as in the CLI), so a sample's
+  CellFie score depends on the other samples.
+- **Save / Load results**: *Save results* downloads a self-contained JSON file
+  (scores, method + parameters, model key and sha256, a fingerprint of the
+  task list's routes, and the scoring signal restricted to the genes the routes
+  reach -- the expression for TAS, the gene activity levels for CellFie).
+  *Export TSV* is just the task x sample score matrix. *Load results* switches
+  the view to the saved model/task list/method/parameters and shows the scores
+  and networks without recomputing, but only accepts a file whose model file
+  and routes are exactly the ones installed (otherwise it says why). A loaded
+  TAS file's expression can be re-run; CellFie's cannot (its signal is the
+  thresholded activity, not the expression).
+- **View toggles** (top right) and the `x` on a panel show or hide the data bar,
+  analysis bar, legend, task panel and detail panel -- the network takes the
+  freed space: it is zoomed to the panel's width (its height follows the graph,
+  at least the window's remaining height), and re-fits when panels toggle or the
+  window resizes. Keyboard: `c`, `a`, `l`, `t`, `d` (ignored while typing in a
+  field). The choice is remembered in the browser.
 
 ## What's static vs. per-sample
 
-- **Static (per model+task, computed once and cached for the server's
-  lifetime)**: enumerated routes (`data/routes_human2.db`, already built),
-  each reaction's GPR-derived candidate complexes, EC/BiGG annotations,
-  each route's solved flux vector, and which metabolites are the task's
-  declared IN/OUT boundary.
+- **Static (per model + task list, computed once and cached for the
+  server's lifetime)**: enumerated routes, each reaction's GPR-derived
+  candidate complexes, EC/BiGG annotations (Human-GEM only), each route's
+  stored flux vector, and which metabolites are the task's declared IN/OUT
+  boundary.
 - **Per-sample (cheap, recomputed live)**: each candidate complex's score
   (min over its genes' expression), each reaction's evidence classification,
   each route's aggregate score, and which route(s) win for that sample.
 
-This split is why the tool can score an arbitrary uploaded dataset live
-without needing COBRApy or a solver at request time for the scoring step
-itself -- only the one-time-per-route flux solve needs them.
-
 ## API
 
-- `GET /api/tasks` -- every task with a route count.
+- `GET /api/models` -- every discovered model with its task lists
+  (`available: false` if its model file wasn't found next to the database).
+  Reads the databases only; never loads a model.
+- `GET /api/models/{model}/task_lists/{task_list}/tasks` -- the valid tasks
+  of a list with route counts (this is what first loads the model).
 - `POST /api/datasets` (multipart file) -- upload an expression table, get
   back a `dataset_id` and its sample columns.
 - `GET /api/datasets/{id}` -- sample columns for an existing dataset (used
   for the bundled `gtex-example` dataset without re-uploading).
-- `GET /api/datasets/{id}/scores?sample=...` -- score every task against
-  one sample column.
-- `GET /api/datasets/{id}/network/{task_id}?sample=...` -- the winning
-  route(s)' network graph for one task/sample, in the same
-  `{task_id, task_description, tissue, panels: [...]}` shape the earlier
-  static-Artifact prototype used.
+- `GET /api/methods` -- every scoring method with its parameters (name, type,
+  default, choices, help).
+- `POST /api/runs` `{model, task_list, dataset_id, method, params}` -- validate
+  and start a run (202). 400 for a bad method/parameter or a dataset sharing no
+  genes with the model; `GET /api/runs/{id}` -- status and progress;
+  `DELETE /api/runs/{id}` -- cancel; `GET /api/runs/{id}/results` -- the
+  tasks x samples score matrix (with completeness and tie flags).
+- `GET /api/models/{model}/task_lists/{task_list}/tasks/{task_id}/network
+  [?run_id=...&sample=...]` -- the winning route(s)' network graph for one
+  task, scored with that run's parameters (all route variants, unscored, when
+  no run is given; a task flagged invalid gets 409).
 
 ## Frontend: how a network result gets rendered
 

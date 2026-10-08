@@ -126,7 +126,9 @@
    * viewHeight (800), layoutConfig, nodeStroke(node) (default "none"),
    * nodeLabel(node), labelOffset(node) (default nodeSize(node)/2 + 13),
    * nodeLabelStyle(node) -> {fontSize, fontWeight, fill}, nodeTooltip(node),
-   * onNodeClick(node), zoomExtent ([0.3, 5]).
+   * onNodeClick(node), zoomExtent ([0.3, 5]), fitToView (false: initially zoom
+   * the graph to the panel width, at most maxFitScale (1.6), with the SVG height
+   * following it between viewHeight and maxViewHeight (2400)).
    *
    * @returns the same {nodes, links, size} layout() produced, in case the
    *   caller wants it (e.g. to report the rendered graph's reaction count).
@@ -149,6 +151,9 @@
       nodeTooltip,
       onNodeClick,
       zoomExtent = [0.3, 5],
+      fitToView = false,
+      maxFitScale = 1.6,
+      maxViewHeight = 2400,
     } = options;
 
     if (!nodeSize || !nodeShape || !nodeFill || !edgeColor || !edgeWidth) {
@@ -156,8 +161,17 @@
     }
 
     const { nodes, links, size } = layout(graph, { orientation, nodeSize, layoutConfig });
-    const width = Math.max(viewWidth, size.width + 40);
-    const height = Math.max(viewHeight, size.height + 40);
+    // fitToView: the graph is zoomed (initially) to the panel's width, and the SVG
+    // grows or shrinks in height to match -- at least viewHeight, at most
+    // maxViewHeight, beyond which the scale gives way instead -- so the drawing
+    // follows the space the panel actually has. Otherwise the viewBox grows to the
+    // graph, and a wide panel just letterboxes it.
+    const width = fitToView ? viewWidth : Math.max(viewWidth, size.width + 40);
+    let fitScale = 1;
+    if (fitToView) fitScale = Math.min((width - 40) / size.width, maxFitScale);
+    const height = fitToView
+      ? Math.min(maxViewHeight, Math.max(viewHeight, size.height * fitScale + 40))
+      : Math.max(viewHeight, size.height + 40);
 
     container.innerHTML = "";
     const svg = d3
@@ -165,11 +179,16 @@
       .append("svg")
       .attr("viewBox", [0, 0, width, height])
       .style("width", "100%")
-      .style("height", viewHeight + "px");
+      .style("height", (fitToView ? height : viewHeight) + "px");
 
     const defs = svg.append("defs");
     const g = svg.append("g");
-    svg.call(d3.zoom().scaleExtent(zoomExtent).on("zoom", (ev) => g.attr("transform", ev.transform)));
+    const zoom = d3.zoom().scaleExtent(zoomExtent).on("zoom", (ev) => g.attr("transform", ev.transform));
+    svg.call(zoom);
+    if (fitToView) {
+      const k = Math.min(fitScale, (height - 40) / size.height);
+      svg.call(zoom.transform, d3.zoomIdentity.translate((width - size.width * k) / 2, (height - size.height * k) / 2).scale(k));
+    }
 
     const lineGen = d3.line().x((p) => p.x).y((p) => p.y).curve(d3.curveLinear);
     const uid = `ngv-${Math.random().toString(36).slice(2)}`;

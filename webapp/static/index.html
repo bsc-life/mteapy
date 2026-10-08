@@ -33,7 +33,27 @@
             padding: 0.5rem 1rem; border: 1px solid var(--hairline); border-radius: 8px; margin-bottom: 1rem; background: var(--surface); }
   .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
   .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-  .grid { display: grid; grid-template-columns: 360px 1fr 380px; gap: 1rem; align-items: start; }
+  .grid { display: grid; grid-template-columns: 360px minmax(0, 1fr) 380px; gap: 1rem; align-items: start; }
+  .hide-tasks .grid { grid-template-columns: minmax(0, 1fr) 380px; }
+  .hide-detail .grid { grid-template-columns: 360px minmax(0, 1fr); }
+  .hide-tasks.hide-detail .grid { grid-template-columns: minmax(0, 1fr); }
+  .hide-tasks #tasks-panel, .hide-detail #detail-panel, .hide-legend .legend, .hide-controls #controls-bar, .hide-analysis #analysis-bar, .hide-analysis #method-desc { display: none; }
+  .analysis { border-color: var(--accent); }
+  #method-params { display: inline-flex; flex-wrap: wrap; gap: 0.9rem; align-items: center; }
+  .analysis .param { display: inline-flex; gap: 0.3rem; align-items: center; }
+  .analysis input[type=number] { width: 5.5rem; font-size: 0.8rem; }
+  .analysis button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .analysis button:disabled { opacity: 0.5; cursor: default; }
+  #run-progress { width: 9rem; height: 0.7rem; }
+  #method-desc { color: var(--ink-2); font-size: 0.78rem; margin: -0.6rem 0.2rem 1rem; max-width: 70rem; }
+  #run-status.err { color: var(--evidence-none); }
+  .view-toggles { display: inline-flex; gap: 0.35rem; align-items: center; margin-left: auto; font-size: 0.8rem; color: var(--ink-2); }
+  .view-toggles button { cursor: pointer; background: var(--page); border: 1px solid var(--hairline); border-radius: 6px;
+                          padding: 0.25rem 0.6rem; color: var(--ink-2); font-size: 0.78rem; }
+  .view-toggles button.on { background: var(--gene-node-bg); color: var(--complex-node); border-color: transparent; font-weight: 600; }
+  .panel-hide { cursor: pointer; background: none !important; border: none !important; color: var(--muted) !important;
+                 font-size: 0.9rem !important; padding: 0 0.2rem !important; margin-left: auto; }
+  .titlebar { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
   .panel { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
   .panel-title { font-size: 0.8rem; font-weight: 600; padding: 0.6rem 1rem; border-bottom: 1px solid var(--hairline);
                  color: var(--ink-2); display: flex; align-items: center; gap: 0.6rem; }
@@ -64,15 +84,43 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>mteapy task visualizer</h1>
-  <div class="sub">Context-aware metabolic task scoring &mdash; upload gene expression, score every task, inspect the winning route.</div>
+  <div class="titlebar">
+    <h1>mteapy task visualizer</h1>
+    <div class="view-toggles" role="group" aria-label="Show or hide panels">
+      View:
+      <button data-view="controls" title="Toggle the data controls bar (c)">Data</button>
+      <button data-view="analysis" title="Toggle the analysis bar (a)">Analysis</button>
+      <button data-view="legend" title="Toggle the legend (l)">Legend</button>
+      <button data-view="tasks" title="Toggle the task panel (t)">Tasks</button>
+      <button data-view="detail" title="Toggle the detail panel (d)">Detail</button>
+    </div>
+  </div>
+  <div class="sub">Context-aware metabolic task scoring &mdash; pick a model and task list, upload gene expression, score every task, inspect the winning route.</div>
 
-  <div class="toolbar">
+  <div class="toolbar" id="controls-bar">
+    <label>Model: <select id="model-select" disabled><option>loading...</option></select></label>
+    <label>Task list: <select id="tasklist-select" disabled><option>&mdash;</option></select></label>
     <label>Upload expression (CSV/TSV, gene id + sample columns): <input id="file-input" type="file" accept=".csv,.tsv,.txt,.gct"></label>
     <label>Example dataset: <button id="load-gtex-btn">Load bundled GTEx tissues</button></label>
     <label>Sample: <select id="sample-select" disabled><option>upload data first</option></select></label>
     <span id="status-msg"></span>
   </div>
+
+  <div class="toolbar analysis" id="analysis-bar">
+    <label>Method: <select id="method-select" disabled><option>loading...</option></select></label>
+    <span id="method-params"></span>
+    <button id="run-btn" class="primary" disabled title="Score every task of the selected list against every sample">Run</button>
+    <button id="cancel-btn" hidden>Cancel</button>
+    <progress id="run-progress" hidden max="1" value="0"></progress>
+    <span id="run-status"></span>
+    <span class="result-files">
+      <button id="save-btn" disabled title="Download this run as a self-contained file (scores, parameters, model id and the expression it used)">Save results</button>
+      <button id="tsv-btn" disabled title="Download the task x sample score matrix as TSV">Export TSV</button>
+      <button id="load-btn" title="Load results saved earlier; they are only accepted against the model and routes they were computed on">Load results</button>
+      <input id="load-input" type="file" accept=".json,application/json" hidden>
+    </span>
+  </div>
+  <div id="method-desc"></div>
 
   <div class="legend">
     <span>expressed (supported/ambiguous):</span>
@@ -88,17 +136,17 @@
   </div>
 
   <div class="grid">
-    <div class="panel">
-      <div class="panel-title"><span style="flex:1;">Tasks</span></div>
+    <div class="panel" id="tasks-panel">
+      <div class="panel-title"><span style="flex:1;">Tasks</span><button class="panel-hide" data-view="tasks" title="Hide this panel (t)">&times;</button></div>
       <div style="padding:0.7rem;">
         <input id="task-search" type="text" placeholder="Filter by id or description...">
         <div id="task-table-wrap">
           <table class="tasks">
             <thead><tr>
-              <th data-sort="source">Source</th><th data-sort="task_id">ID</th><th data-sort="description">Description</th>
+              <th data-sort="task_id">ID</th><th data-sort="description">Description</th>
               <th data-sort="n_routes">Routes</th><th data-sort="score">Score</th>
             </tr></thead>
-            <tbody id="task-tbody"><tr><td colspan="5" class="placeholder">Loading tasks...</td></tr></tbody>
+            <tbody id="task-tbody"><tr><td colspan="4" class="placeholder">Loading tasks...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -115,8 +163,8 @@
       <div id="panel-host"></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-title"><span id="detail-title">Detail</span></div>
+    <div class="panel" id="detail-panel">
+      <div class="panel-title"><span id="detail-title" style="flex:1;">Detail</span><button class="panel-hide" data-view="detail" title="Hide this panel (d)">&times;</button></div>
       <div id="detail-panel-inner">
         <div class="placeholder">Click any node &mdash; a reaction (square) or a metabolite (circle) &mdash; to see its full information here.</div>
       </div>
