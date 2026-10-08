@@ -12,44 +12,55 @@ from mteapy.utils import print_banner, mask_lfc_values, add_task_metadata, check
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
 from mteapy.context_scoring import build_complex_cache, compute_TAS
-from mteapy.routes import connect, latest_model_id, load_multiroute_tasks
+from mteapy import registry, taskdb
 from mteapy.cmds import enumerate_routes as enumerate_routes_cmd
 
 
 def _load_context_aware_inputs(args):
     """Shared by TIDE/CellFie's --mapping-strategy context-aware: the model
     matching the routes database's reaction ids, and every task's
-    enumerated routes for the chosen --routes-source (single-route tasks
+    enumerated routes for the chosen --task-list (single-route tasks
     included -- there's simply nothing for the topology dimension to
     distinguish, not a reason to skip scoring them)."""
-    model_file = args.routes_model_file or enumerate_routes_cmd.DEFAULT_MODEL_PATH
-    db_path = args.routes_db or enumerate_routes_cmd.DEFAULT_DB_PATH
+    db_path, model_file = enumerate_routes_cmd.resolve_paths(args.model, args.routes_db, args.routes_model_file)
+
+    try:
+        conn = taskdb.connect(db_path)
+        task_list = taskdb.get_task_list(conn, args.task_list)
+        taskdb.verify_model_file(conn, task_list["model_id"], model_file)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(f"{bc.FAIL}ERROR: {exc.args[0]}{bc.ENDC}\n")
+        exit(1)
 
     print(f"Loading context-aware model ({model_file})", end=" ")
     model = read_sbml_model(model_file)
     print("- OK.")
 
-    conn = connect(db_path)
-    model_id = latest_model_id(conn)
-    if model_id is None:
-        print(f"{bc.FAIL}ERROR: routes database {db_path} has no registered model.{bc.ENDC}\n")
-        exit(1)
-
-    all_by_source_task = load_multiroute_tasks(conn, model_id, min_routes=1)
-    tasks_routes = {
-        task_id: routes for (source, task_id), routes in all_by_source_task.items()
-        if source == args.routes_source
-    }
+    tasks_routes = taskdb.load_task_list_routes(conn, args.task_list, min_routes=1)
     if not tasks_routes:
-        print(f"{bc.FAIL}ERROR: no enumerated routes found for source={args.routes_source!r} in {db_path}. "
-              f"Run `run-mtea tasks enumerate-routes --source {args.routes_source}` first.{bc.ENDC}\n")
+        print(f"{bc.FAIL}ERROR: no enumerated routes found for task list {args.task_list!r} in {db_path}. "
+              f"Run `run-mtea tasks enumerate-routes --task-list {args.task_list}` first.{bc.ENDC}\n")
         exit(1)
-    print(f"Loaded {len(tasks_routes)} tasks' routes for source={args.routes_source!r}.")
+    print(f"Loaded {len(tasks_routes)} tasks' routes for task list {args.task_list!r}.")
 
     all_reactions = sorted({r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
     complex_cache = build_complex_cache(model, all_reactions)
 
     return model, tasks_routes, complex_cache
+
+
+def _list_models() -> None:
+    entries = registry.discover_models()
+    if not entries:
+        print(f"No models found (searched: {registry.default_search_paths()}).")
+        return
+    for e in entries:
+        status = f"{bc.OKGREEN}ok{bc.ENDC}" if e.available else f"{bc.FAIL}unusable{bc.ENDC}"
+        print(f"{bc.CYAN}{e.key}{bc.ENDC}  [{status}]  {e.name} {e.version or ''}  ({e.directory or e.db_path})")
+        for tl in e.task_lists:
+            print(f"    task list {tl['name']}: {tl.get('description', '')}")
+        for problem in e.problems:
+            print(f"    {bc.FAIL}! {problem}{bc.ENDC}")
 
 
 def main() -> None:
@@ -73,12 +84,23 @@ def main() -> None:
     # "tasks" group
     ###########################################
 
-    if args.command == "tasks":
+    if args.command == "models":
 
-        if args.tasks_command == "enumerate-routes":
+        if args.models_command == "list":
+            _list_models()
+        else:
+            print("Usage: run-mtea models list")
+            print(f"{bc.FAIL}Select one of the available `models` commands (see --help for more information).{bc.ENDC}\n")
+            exit(1)
+
+    elif args.command == "tasks":
+
+        if args.tasks_command == "import":
+            enumerate_routes_cmd.run_import(args)
+        elif args.tasks_command == "enumerate-routes":
             enumerate_routes_cmd.run(args)
         else:
-            print("Usage: run-mtea tasks enumerate-routes [options] task_file")
+            print("Usage: run-mtea tasks {import,enumerate-routes} [options]")
             print(f"{bc.FAIL}Select one of the available `tasks` commands (see --help for more information).{bc.ENDC}\n")
             exit(1)
 

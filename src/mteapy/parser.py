@@ -3,6 +3,8 @@ from rich_argparse import ArgumentDefaultsRichHelpFormatter, RichHelpFormatter
 
 import importlib.metadata
 
+from mteapy import methods
+
 
 RichHelpFormatter.group_name_formatter = str.upper
 FORMATTER = ArgumentDefaultsRichHelpFormatter
@@ -29,15 +31,19 @@ def _add_mapping_strategy_args(parser):
                          help="'classic': score each task's single, fixed reaction set. 'context-aware': "
                               "enumerate alternate routes per task and score the best-supported one "
                               "(requires routes already built with `run-mtea tasks enumerate-routes`).")
-    parser.add_argument("--routes-db", action="store", type=str, dest="routes_db", default=None,
-                         help="Path to a routes database (default: mteapy's own bundled routes_human2.db). "
+    parser.add_argument("--model", action="store", type=str, dest="model", default=None,
+                         help="Which registered model to use: a key from `run-mtea models list` or a model folder "
+                              "(default: the bundled Human-GEM). Supplies the routes database and model file. "
                               "Only used with --mapping-strategy context-aware.")
-    parser.add_argument("--routes-source", action="store", type=str, dest="routes_source", default="full",
-                         help="Which `source` label's enumerated routes to use (see `run-mtea tasks "
-                              "enumerate-routes --source`). Only used with --mapping-strategy context-aware.")
+    parser.add_argument("--routes-db", action="store", type=str, dest="routes_db", default=None,
+                         help="Override --model's routes database with this file. "
+                              "Only used with --mapping-strategy context-aware.")
+    parser.add_argument("--task-list", action="store", type=str, dest="task_list", default="HumanGEM-Full",
+                         help="Which stored task list's enumerated routes to use (see `run-mtea tasks import "
+                              "--task-list`). Only used with --mapping-strategy context-aware.")
     parser.add_argument("--routes-model-file", action="store", type=str, dest="routes_model_file", default=None,
-                         help="Model file matching the routes database's reaction ids (default: mteapy's own "
-                              "bundled HumanGEM_v201.xml). Only used with --mapping-strategy context-aware -- "
+                         help="Override --model's model file with this one (it must match the routes database's "
+                              "reaction ids). Only used with --mapping-strategy context-aware -- "
                               "this is independent of, and does not need to match, the model implied by "
                               "--mapping-strategy classic's bundled task_structure_matrix.tsv.")
 
@@ -67,35 +73,61 @@ def mtea_parser():
     # "tasks" group -- task/route database preparation
     ###########################################
 
+    models_parser = subparser.add_parser("models", help="list the registered models and check their files", formatter_class=FORMATTER)
+    models_subparser = models_parser.add_subparsers(title="models commands", required=False, dest="models_command")
+    models_subparser.add_parser("list", help="list every model found (bundled, ~/.mteapy/models, or $MTEAPY_MODELS) "
+                                             "with its task lists and whether its files check out",
+                                formatter_class=FORMATTER)
+
     tasks_parser = subparser.add_parser("tasks", help="prepare/manage the task-route database", formatter_class=FORMATTER)
     tasks_subparser = tasks_parser.add_subparsers(title="tasks commands", required=False, dest="tasks_command")
 
-    enum_parser = tasks_subparser.add_parser(
-        "enumerate-routes",
-        help="enumerate alternate reaction routes for a task list against a model (dataset-agnostic; "
-             "run once per model+task-list, reused by every sample later scored with --mapping-strategy context-aware)",
+    import_parser = tasks_subparser.add_parser(
+        "import",
+        help="store a RAVEN-style task list file, validated against a model, as a named task list in the "
+             "task/route database (creating the database if needed)",
         formatter_class=FORMATTER,
     )
-    enum_parser.add_argument("task_file", action="store", help="Path to a RAVEN-style metabolic task list file.")
+    import_parser.add_argument("task_file", action="store", help="Path to a RAVEN-style metabolic task list file.")
+    import_parser.add_argument("--task-list", action="store", type=str, dest="task_list", required=True,
+                                help="Name to store the list under (e.g. 'HumanGEM-Full'). Task lists are immutable: "
+                                     "to change a task, import the edited file under a new name.")
+    import_parser.add_argument("--description", action="store", type=str, dest="description", default=None)
+    import_parser.add_argument("--model", action="store", type=str, dest="model", default=None,
+                                help="Registered model (key from `run-mtea models list`, or a model folder) whose "
+                                     "model file and database to use (default: the bundled Human-GEM).")
+    import_parser.add_argument("--model-file", action="store", type=str, dest="model_file", default=None,
+                                help="Override the model file the tasks are validated against.")
+    import_parser.add_argument("--db", action="store", type=str, dest="db", default=None,
+                                help="Override the task/route database to write into (created if missing). Giving "
+                                     "both --db and --model-file builds a new database without any registered model.")
+    import_parser.add_argument("--model-name", action="store", type=str, dest="model_name", default=None,
+                                help="Name to register the model under; required the first time a model is used with a database.")
+    import_parser.add_argument("--model-version", action="store", type=str, dest="model_version", default=None)
+
+    enum_parser = tasks_subparser.add_parser(
+        "enumerate-routes",
+        help="enumerate alternate reaction routes (with fluxes) for every valid task of an imported task list "
+             "(dataset-agnostic; run once per model+task-list, reused by every sample later scored with "
+             "--mapping-strategy context-aware)",
+        formatter_class=FORMATTER,
+    )
+    enum_parser.add_argument("--task-list", action="store", type=str, dest="task_list", required=True,
+                              help="Name of a task list already stored with `run-mtea tasks import`.")
+    enum_parser.add_argument("--model", action="store", type=str, dest="model", default=None,
+                              help="Registered model (key from `run-mtea models list`, or a model folder) whose "
+                                   "model file and database to use (default: the bundled Human-GEM).")
     enum_parser.add_argument("--model-file", action="store", type=str, dest="model_file", default=None,
-                              help="SBML model file to enumerate routes against (default: mteapy's own bundled HumanGEM_v201.xml).")
+                              help="Override the SBML model file to enumerate against; must be the model the "
+                                   "database was built with.")
     enum_parser.add_argument("--db", action="store", type=str, dest="db", default=None,
-                              help="Routes database to write into, creating it if needed (default: mteapy's own bundled routes_human2.db).")
-    enum_parser.add_argument("--source", action="store", type=str, dest="source", required=True,
-                              help="Label to store this task list's routes under (e.g. 'full'); lets a second run "
-                                   "against a different model/solver be stored separately for comparison.")
-    enum_parser.add_argument("--task-list", action="store", type=str, dest="task_list", default=None,
-                              help="Groups this --source with any others reading from the same underlying task "
-                                   "list (e.g. a solver-comparison re-run), independent of which specific "
-                                   "solver/run produced them -- lets a caller select by task list (e.g. 'cellfie') "
-                                   "without needing to know every individual source name. Omit to leave an "
-                                   "existing classification for this source unchanged.")
+                              help="Override the task/route database to write into.")
     enum_parser.add_argument("--solver", action="store", type=str, dest="solver", default=None,
                               help="COBRApy solver name (e.g. 'gurobi', 'cplex', 'glpk'). Default: whatever cobra picks.")
     enum_parser.add_argument("--max-routes", action="store", type=int, dest="max_routes", default=10,
                               help="Maximum number of alternate routes to search for per task.")
     enum_parser.add_argument("--mode", action="store", type=str, dest="mode", choices=["reset", "resume"], default=None,
-                              help="'reset': permanently delete existing routes for this (source, model) first, "
+                              help="'reset': permanently delete existing routes for this task list first, "
                                    "after confirmation (see --yes). 'resume': skip already-exhaustive tasks, "
                                    "continue capped ones from their stored routes. Default: full re-run of every task.")
     enum_parser.add_argument("--yes", action="store_true", dest="skip_confirmation",
@@ -105,7 +137,7 @@ def mtea_parser():
     enum_parser.add_argument("--limit", action="store", type=int, dest="limit", default=None,
                               help="Only process the first N tasks (for timing/partial runs).")
     enum_parser.add_argument("--start-at", action="store", type=int, dest="start_at", default=0,
-                              help="Skip tasks with id < this.")
+                              help="Skip tasks with a numeric id < this.")
 
     ###########################################
     # "analyze" group -- sample expression analysis
@@ -173,23 +205,9 @@ def mtea_parser():
 
     CellFie_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
 
-    CellFie_parser.add_argument("--threshold_type", action="store", type=str, dest="thresh_type", default="local", choices=["local","global"], help="Determines the threshold approach to be used. A global approach used the same threshold for all genes whereas a local approach uses a different threshold for each gene when computing the gene activity levels.")
-
-    CellFie_parser.add_argument("--global_threshold_type", action="store", type=str, dest="global_thresh_type", default="percentile", choices=["value","percentile"], help="Whether to use a value or a percentile of the distribution of all genes as global treshold for all genes.")
-
-    CellFie_parser.add_argument("--global_value", action="store", type=float, dest="global_value", default=0.75, help="Value to use as global threshold according to the global_threshold_type option selected. Note that percentile values must be between 0 and 1.")
-
-    CellFie_parser.add_argument("--local_threshold_type", action="store", type=str, dest="local_thresh_type", default="minmaxmean", choices=["minmaxmean","mean"], help="Determines the threshold type to be used in a local approach. minmaxmean: the threshold for each gene is determined by the mean of expression values across all conditions/samples but must be higher or equal than a lower bound and lower or equal to an upper bound. mean: the threshold of a gene is determined as its mean expression across all conditions/samples.")
-
-    CellFie_parser.add_argument("--minmaxmean_threshold_type", action="store", type=str, dest="minmaxmean_thresh_type", default="percentile", choices=["percentile","value"], help="Whether to use value or percentile of the distribution of all genes as upper and lower bounds.")
-
-    CellFie_parser.add_argument("--upper_bound", action="store", type=float, dest="upper_bound", default=0.75, help="Upper bound value to be used according to the minmaxmean_threshold_type. Note that percentile values must be between 0 and 1")
-
-    CellFie_parser.add_argument("--lower_bound", action="store", type=float, dest="lower_bound", default=0.25, help="Lower bound value to be used according to the minmaxmean_threshold_type. Note that percentile values must be between 0 and 1.")
+    methods.add_arguments(CellFie_parser, methods.CELLFIE)
 
     CellFie_parser.add_argument("--binary_scores", action="store_true", dest="binary_scores_flag", help="Flag to indicate whether to also return the binary metabolic score matrix as a second result file. See the original publication for more details.")
-
-    CellFie_parser.add_argument("--log_transformed", action="store_true", dest="log_transformed", help="Flag to indicate that the input expression file is already log-transformed. Percentile-based thresholds are then computed directly on the given values; by default (flag unset), thresholds are computed in log10 space and converted back, matching the original CellFie algorithm's assumption that input is raw (linear) expression.")
 
     _add_mapping_strategy_args(CellFie_parser)
 
@@ -207,9 +225,7 @@ def mtea_parser():
 
     TAS_parser.add_argument("--gene_col", action="store", type=str, dest="gene_col", default="geneID", help="Name of the column in the inputed file containing gene names/symbols. Genes must be stored as EnsemblIDs.")
 
-    TAS_parser.add_argument("--aggregation", action="store", type=str, dest="aggregation", default="min", choices=["min", "median", "mean"], help="How a task's (or one route's) reaction scores combine into one task score.")
-
-    TAS_parser.add_argument("--or_func", action="store", type=str, dest="or_func", choices=["max", "absmax"], default="max", help="Name of the function that will be used to resolve OR relationships in gene-protein-reaction (GPR) rules. Possible values are absmax, which will return the absolute maximum value, and max, which will return the maximum value.")
+    methods.add_arguments(TAS_parser, methods.TAS)
 
     _add_mapping_strategy_args(TAS_parser)
 

@@ -24,7 +24,9 @@ across requests rather than recomputing them per sample.
 
 from __future__ import annotations
 
-from cobra.core import Model
+import dataclasses
+
+from cobra.core import Metabolite, Model
 from cobra_netgraph.bipartite import (
     CURRENCY_DEGREE_THRESHOLD,
     CURRENCY_NAMES,
@@ -36,7 +38,10 @@ from cobra_netgraph.bipartite import (
 from cobra_netgraph.gpr import get_enzymes
 
 from mteapy.context_scoring import assess_reaction
-from mteapy.task_model import build_task_model, is_pseudo_reaction, set_min_total_flux_objective
+from mteapy.task_model import (
+    _EQU_ARROW_PATTERN, _EQU_TERM_SPLIT_PATTERN, _parse_equation_term, build_metabolite_lookup,
+    build_task_model, is_pseudo_reaction, set_min_total_flux_objective,
+)
 from mteapy.tasks import MetabolicTask
 
 __all__ = [
@@ -81,6 +86,47 @@ def compute_route_fluxes(model: Model, task: MetabolicTask, reactions: set[str])
     for reaction in tmodel.reactions:
         if not is_pseudo_reaction(reaction.id) and reaction.id not in reactions:
             reaction.bounds = (0.0, 0.0)
+    set_min_total_flux_objective(tmodel)
+    solution = tmodel.optimize()
+    return {rid: solution.fluxes[rid] for rid in reactions}
+
+
+def compute_route_fluxes_submodel(model: Model, task: MetabolicTask, reactions: set[str],
+                                  met_lookup: dict[str, str] | None = None) -> dict[str, float]:
+    """Same result as `compute_route_fluxes`, but solved on a tiny model
+    holding only this route's reactions (plus the task's pseudo reactions)
+    instead of a copy of the whole genome-scale model.
+
+    `compute_route_fluxes` closes every non-route reaction to (0, 0), so
+    they cannot carry flux anyway; dropping them changes nothing about the
+    feasible set, only how much model has to be copied and handed to the
+    solver. Task metabolites the route's reactions don't touch are still
+    added (as bare metabolites) so their pseudo source/demand reactions
+    keep their bounds, exactly as in the full model. A `CHANGED RXN` entry
+    for a reaction outside the route is dropped -- that reaction is closed
+    in the full-model version regardless.
+    """
+    lookup = met_lookup if met_lookup is not None else build_metabolite_lookup(model)
+    sub = Model(f"route_{task.id}")
+    sub.add_reactions([model.reactions.get_by_id(rid).copy() for rid in reactions])
+
+    tokens = [bm.metabolite for bm in task.inputs] + [bm.metabolite for bm in task.outputs]
+    for eq in task.equations:
+        arrow = _EQU_ARROW_PATTERN.search(eq.equation)
+        for side in ((eq.equation[: arrow.start()], eq.equation[arrow.end():]) if arrow else ()):
+            for term in _EQU_TERM_SPLIT_PATTERN.split(side):
+                if term.strip():
+                    tokens.append(_parse_equation_term(term.strip())[1])
+    for token in tokens:
+        met_id = lookup.get(token.strip())
+        if met_id is not None and met_id not in sub.metabolites:
+            src = model.metabolites.get_by_id(met_id)
+            sub.add_metabolites([Metabolite(src.id, formula=src.formula, name=src.name, compartment=src.compartment)])
+
+    sub_task = dataclasses.replace(
+        task, changed_bounds=[cb for cb in task.changed_bounds if cb.reaction_id in sub.reactions]
+    )
+    tmodel = build_task_model(sub, sub_task, lookup)
     set_min_total_flux_objective(tmodel)
     solution = tmodel.optimize()
     return {rid: solution.fluxes[rid] for rid in reactions}

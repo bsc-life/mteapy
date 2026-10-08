@@ -312,7 +312,7 @@ def calculate_TIDE_scores_context_aware(gene_dict:dict, tasks_routes:dict, compl
 
     tasks_routes: dict
         `{task_id: {route_id: reaction_id_set}}`, e.g. from
-        `mteapy.routes.load_multiroute_tasks`/`load_task_routes`.
+        `mteapy.taskdb.load_task_list_routes`.
 
     complex_cache: dict
         `{reaction_id: candidate_complexes}`, from

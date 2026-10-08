@@ -43,7 +43,7 @@ minutes.
 
 This is the "build" side of context-aware task scoring: slow and
 solver-dependent, meant to be run occasionally (once per model/task-list
-version) to populate a routes database that `mteapy.routes` then reads
+version) to populate a routes database that `mteapy.taskdb` then reads
 from at scoring time -- not something the typical scoring workflow runs
 live.
 """
@@ -68,7 +68,7 @@ class RouteResult:
 
     The flux comes for free -- enumeration already solves this exact LP to
     discover the route -- so it costs nothing extra to keep it. Persisting
-    it (`mteapy.routes.record_enumeration_result`'s `fluxes` argument) means
+    it (`mteapy.taskdb.record_enumeration_result`'s `fluxes` argument) means
     a later caller building a route's network diagram never has to re-solve
     this LP just to know which way each reaction's arrow should point or how
     thick to draw it.
@@ -136,7 +136,7 @@ def iter_alternate_routes(
 
     `seed_routes`, if given, are routes already known for this exact task
     (e.g. from a previous, capped enumeration run persisted via
-    `mteapy.routes`) -- their cardinality cuts are applied up front,
+    `mteapy.taskdb`) -- their cardinality cuts are applied up front,
     *without* re-solving or re-yielding them, so the very first solve this
     call actually performs already excludes all of them and searches
     directly for a genuinely new route. This is what lets a caller resume
@@ -280,13 +280,13 @@ def compute_task_alternate_routes(
 ) -> tuple[dict[str, list[RouteResult]], pd.DataFrame]:
     """Enumerate alternate routes for every task in `tasks`, always from
     scratch (no resume support: it never seeds from or persists to
-    `mteapy.routes`, so a task already run once still redoes the full
+    `mteapy.taskdb`, so a task already run once still redoes the full
     search). A convenience wrapper for a one-off/ad-hoc batch or small
     models -- a caller that wants resume support, or to persist results
     incrementally (a genome-scale batch job, where a single run can take
     hours), should call `enumerate_alternate_routes` directly per task and
-    persist each result via `mteapy.routes.record_enumeration_result`,
-    seeding subsequent runs with `mteapy.routes.load_task_routes` +
+    persist each result via `mteapy.taskdb.record_enumeration_result`,
+    seeding subsequent runs with `mteapy.taskdb.load_task_routes` +
     `enumerate_alternate_routes`'s `seed_routes` -- see
     `mteapy.cmds.enumerate_routes` (the `run-mtea tasks enumerate-routes`
     command) for the reference implementation of that pattern.

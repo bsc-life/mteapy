@@ -264,7 +264,7 @@ def calculate_CellFie_scores_context_aware(gal_df:pd.DataFrame, tasks_routes:dic
 
     tasks_routes: dict
         `{task_id: {route_id: reaction_id_set}}`, e.g. from
-        `mteapy.routes.load_multiroute_tasks`/`load_task_routes`.
+        `mteapy.taskdb.load_task_list_routes`.
 
     model: cobra.core.Model
         The COBRA model the routes' reaction ids come from, used to look up

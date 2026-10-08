@@ -6,7 +6,7 @@ one pFBA solve) and each reaction's GPR to a single flattened number (via
 that approach discards:
 
 - **Topology**: a task can admit several, equally optimal *routes* (distinct
-  reaction sets -- see `mteapy.enumeration`/`mteapy.routes`). Which one
+  reaction sets -- see `mteapy.enumeration`/`mteapy.taskdb`). Which one
   actually matches a sample's biology is itself a question, not a given.
 - **Regulation**: within one reaction, its GPR can itself offer several
   candidate enzyme complexes (`mteapy.complexes.get_enzymes`) -- which one a
@@ -279,7 +279,7 @@ def score_task(
     ----------
     task_routes:
         `{route_id: reaction_id_set}` for one task, e.g. from
-        `mteapy.routes.load_task_routes` (or `load_multiroute_tasks`, keyed
+        `mteapy.taskdb.load_task_routes` (or `load_task_list_routes`, keyed
         down to one task). A single-route task (a plain dict of one entry)
         works fine here -- there is simply nothing for the topology
         dimension to distinguish, and `is_tied` will be False.
@@ -348,29 +348,40 @@ def score_task(
     )
 
 
-def score_tasks_matrix(
+class RunCancelled(Exception):
+    """Raised by a `progress` callback to stop `score_tasks_report` early."""
+
+
+def score_tasks_report(
     tasks_routes: dict[str, dict[int, frozenset[str]]],
     model: Model,
     expr_df: pd.DataFrame,
     aggregation: str = "min",
     or_func: str = "max",
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    progress=None,
+    complex_cache: dict | None = None,
+) -> dict[str, pd.DataFrame]:
     """Score every task in `tasks_routes` against every sample (column) in `expr_df`.
 
-    Returns `(scores, complete)`, two tasks x samples DataFrames of the same
-    shape a CellFie/TIDE score matrix has: `scores` holds each cell's
-    activity score, `complete` the companion boolean (`TaskActivityReport
-    .is_complete`) -- so a caller working matrix-first still sees which
-    scores rest on ambiguous or absent evidence rather than that
-    information being silently dropped. Call `score_task` directly (per
-    task, per sample) for the full per-route/per-reaction/per-complex
-    report, not just these two numbers.
+    Returns four tasks x samples DataFrames (task ids as the index, sample
+    names as the columns):
+
+    - ``scores``: each cell's activity score (`TaskActivityReport.score`)
+    - ``complete``: bool, `TaskActivityReport.is_complete` -- whether the
+      score rests on fully supported evidence rather than ambiguous or
+      absent reactions
+    - ``tied``: bool, `TaskActivityReport.is_tied` -- more than one route
+      shares the top score
+    - ``winners``: the tuple of winning route ids (`winning_route_ids`)
+
+    Call `score_task` directly (per task, per sample) for the full
+    per-route/per-reaction/per-complex report.
 
     Parameters
     ----------
     tasks_routes:
         `{task_id: {route_id: reaction_id_set}}` for every task to score,
-        e.g. built from one or more calls to `mteapy.routes.load_task_routes`.
+        e.g. `mteapy.taskdb.load_task_list_routes`.
     model:
         The COBRApy model the routes' reaction ids come from, used only to
         look up each reaction's GPR for `build_complex_cache`.
@@ -382,12 +393,22 @@ def score_tasks_matrix(
         Passed through to `score_task`: "max" (default, for a non-negative
         signal like expression) or "absmax" (for a signal that can be
         negative, like a log-fold-change).
+    progress:
+        Optional callable ``progress(samples_done, samples_total)``, called
+        after each sample; it may raise `RunCancelled` to stop the run.
+    complex_cache:
+        A prebuilt `build_complex_cache(model, ...)` covering every reaction
+        in `tasks_routes`, to skip rebuilding it when scoring the same task
+        list repeatedly.
     """
-    all_reactions = sorted({r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
-    complex_cache = build_complex_cache(model, all_reactions)
+    if complex_cache is None:
+        all_reactions = sorted(
+            {r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
+        complex_cache = build_complex_cache(model, all_reactions)
 
-    score_rows: dict[str, dict[str, float]] = {task_id: {} for task_id in tasks_routes}
-    complete_rows: dict[str, dict[str, bool]] = {task_id: {} for task_id in tasks_routes}
+    cells: dict[str, dict[str, dict]] = {"scores": {}, "complete": {}, "tied": {}, "winners": {}}
+    for key in cells:
+        cells[key] = {task_id: {} for task_id in tasks_routes}
 
     # Looped sample-first (not task-first) so one reaction_cache can be
     # shared across every task for a given sample -- assess_reaction's
@@ -395,7 +416,8 @@ def score_tasks_matrix(
     # overlap heavily in which reactions they use, so scoring task-first
     # would rebuild the same (reaction, sample) result redundantly for
     # every task that happens to share it.
-    for sample in expr_df.columns:
+    samples = list(expr_df.columns)
+    for done, sample in enumerate(samples, 1):
         gene_dict = expr_df[sample].to_dict()
         reaction_cache: dict = {}
         for task_id, routes in tasks_routes.items():
@@ -403,10 +425,33 @@ def score_tasks_matrix(
                 routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func,
                 reaction_cache=reaction_cache,
             )
-            score_rows[task_id][sample] = report.score
-            complete_rows[task_id][sample] = report.is_complete
+            cells["scores"][task_id][sample] = report.score
+            cells["complete"][task_id][sample] = report.is_complete
+            cells["tied"][task_id][sample] = report.is_tied
+            cells["winners"][task_id][sample] = tuple(report.winning_route_ids)
+        if progress is not None:
+            progress(done, len(samples))
 
-    return pd.DataFrame(score_rows).T, pd.DataFrame(complete_rows).T
+    out = {}
+    for key, rows in cells.items():
+        frame = pd.DataFrame(rows).T
+        out[key] = frame.reindex(index=list(tasks_routes), columns=samples)
+    return out
+
+
+def score_tasks_matrix(
+    tasks_routes: dict[str, dict[int, frozenset[str]]],
+    model: Model,
+    expr_df: pd.DataFrame,
+    aggregation: str = "min",
+    or_func: str = "max",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """`(scores, complete)` of `score_tasks_report` -- the two tasks x samples
+    DataFrames a CellFie/TIDE score matrix has, so a caller working
+    matrix-first still sees which scores rest on ambiguous or absent
+    evidence rather than that information being silently dropped."""
+    report = score_tasks_report(tasks_routes, model, expr_df, aggregation=aggregation, or_func=or_func)
+    return report["scores"], report["complete"]
 
 
 def compute_TAS(
