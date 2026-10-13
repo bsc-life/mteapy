@@ -51,6 +51,8 @@
   .view-toggles button { cursor: pointer; background: var(--page); border: 1px solid var(--hairline); border-radius: 6px;
                           padding: 0.25rem 0.6rem; color: var(--ink-2); font-size: 0.78rem; }
   .view-toggles button.on { background: var(--gene-node-bg); color: var(--complex-node); border-color: transparent; font-weight: 600; }
+  .restore { display: none; }
+  .hide-tasks .restore[data-view=tasks], .hide-detail .restore[data-view=detail] { display: inline-block; }
   .panel-hide { cursor: pointer; background: none !important; border: none !important; color: var(--muted) !important;
                  font-size: 0.9rem !important; padding: 0 0.2rem !important; margin-left: auto; }
   .titlebar { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
@@ -137,7 +139,7 @@
 
   <div class="grid">
     <div class="panel" id="tasks-panel">
-      <div class="panel-title"><span style="flex:1;">Tasks</span><button class="panel-hide" data-view="tasks" title="Hide this panel (t)">&times;</button></div>
+      <div class="panel-title"><span style="flex:1;">Tasks</span><button class="panel-hide" data-view="tasks" title="Hide this panel -- bring it back with the Tasks button here or in View (t)">&lsaquo; Hide</button></div>
       <div style="padding:0.7rem;">
         <input id="task-search" type="text" placeholder="Filter by id or description...">
         <div id="task-table-wrap">
@@ -154,17 +156,19 @@
 
     <div class="panel">
       <div class="panel-title">
+        <button class="restore" data-view="tasks" title="Show the task panel again (t)">&rsaquo; Tasks</button>
         <button id="prev-btn">&larr; prev</button>
         <span id="panel-title-text">Select a task to render its network</span>
         <button id="orient-btn">&harr; Horizontal</button>
         <button id="next-btn">next &rarr;</button>
+        <button class="restore" data-view="detail" title="Show the detail panel again (d)">&lsaquo; Detail</button>
       </div>
       <div id="task-desc"></div>
       <div id="panel-host"></div>
     </div>
 
     <div class="panel" id="detail-panel">
-      <div class="panel-title"><span id="detail-title" style="flex:1;">Detail</span><button class="panel-hide" data-view="detail" title="Hide this panel (d)">&times;</button></div>
+      <div class="panel-title"><span id="detail-title" style="flex:1;">Detail</span><button class="panel-hide" data-view="detail" title="Hide this panel -- bring it back with the Detail button here or in View (d)">Hide &rsaquo;</button></div>
       <div id="detail-panel-inner">
         <div class="placeholder">Click any node &mdash; a reaction (square) or a metabolite (circle) &mdash; to see its full information here.</div>
       </div>
