@@ -1,7 +1,8 @@
 numpy
 pandas
 cobra>=0.25.0
-rich_# Not yet on PyPI -- private repo, requires SSH access. Once published,
+rich_argparse
+# Not yet on PyPI -- private repo, requires SSH access. Once published,
 # this line can go back to a bare "cobra-netgraph".
 cobra-netgraph @ git+ssh://git@github.com/migp11/cobra-netgraph.git
 pytest
