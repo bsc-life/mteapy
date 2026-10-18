@@ -244,3 +244,20 @@ genes the task list's routes reach, and are accepted on load only against the
 same model sha256 and the same `task_list_routes_fingerprint`. CellFie results
 embed the gene activity levels, not the expression, because CellFie thresholds
 depend on the whole dataset; they load as scores (and networks) only.
+
+## TIDE in the GUI: one comparison per run, input checked before it runs
+
+TIDE's input is a differential-expression table, so it reuses the dataset upload
+(every numeric column is offered) and two `column` parameters pick the log-FC and
+optional p-value columns; one run scores one comparison (what the CLI does). A
+log-FC column with no negative values is *warned about, not blocked* (the user
+may know better, e.g. a one-sided contrast), through `mteapy.inputcheck` --
+shared by the GUI's `/api/runs/check` and the CLI, so both say the same thing --
+while data that cannot be scored at all (missing column, constant column,
+p-values outside [0, 1], no model gene) is an error that disables Run. Expression
+methods get the mirror check (negative values look like fold changes) except TAS
+with `or_func=absmax`, the signed-signal setting. Scores keep their sign and the
+network uses a second hue for negative ones; the table's p-value `0` is shown as
+`< 1/permutations`. Results saved from a TIDE run embed the *masked* fold-change
+column and load as scores only (like CellFie), since the p-value column used to
+mask is not part of the file.

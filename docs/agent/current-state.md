@@ -57,8 +57,9 @@ unilaterally; ask first.
   enumerator is probably solver numerical noise leaving a cut unapplied.
   `record_enumeration_result` now warns and records `truncated` whenever a
   batch contains repeated supports.
-- **GUI**: TAS and CellFie in the methods registry; save/load results done
-  (see `webapp/README.md`); TIDE later (needs DE input and permutations).
+- **GUI**: TAS, CellFie and TIDE (context-aware; TIDE-essential stays CLI-only)
+  in the methods registry; save/load results and the pre-run input checks
+  (`mteapy.inputcheck`, shared with the CLI) done (see `webapp/README.md`).
   Classic mapping via route 0 needs an explicit `route_rank` column first (see
   `decisions.md`).
 - **Servers**: an older copy of the webapp may still be running on port 8765
