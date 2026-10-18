@@ -34,8 +34,10 @@
   .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
   .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
   .grid { display: grid; grid-template-columns: 360px minmax(0, 1fr) 380px; gap: 1rem; align-items: start; }
+  .has-pvalue .grid { grid-template-columns: 430px minmax(0, 1fr) 380px; }   /* room for the p-value column */
   .hide-tasks .grid { grid-template-columns: minmax(0, 1fr) 380px; }
   .hide-detail .grid { grid-template-columns: 360px minmax(0, 1fr); }
+  .has-pvalue.hide-detail .grid { grid-template-columns: 430px minmax(0, 1fr); }
   .hide-tasks.hide-detail .grid { grid-template-columns: minmax(0, 1fr); }
   .hide-tasks #tasks-panel, .hide-detail #detail-panel, .hide-legend .legend, .hide-controls #controls-bar, .hide-analysis #analysis-bar, .hide-analysis #method-desc { display: none; }
   .analysis { border-color: var(--accent); }
@@ -51,6 +53,12 @@
   .view-toggles button { cursor: pointer; background: var(--page); border: 1px solid var(--hairline); border-radius: 6px;
                           padding: 0.25rem 0.6rem; color: var(--ink-2); font-size: 0.78rem; }
   .view-toggles button.on { background: var(--gene-node-bg); color: var(--complex-node); border-color: transparent; font-weight: 600; }
+  .run-warnings { margin: -0.4rem 0 0.8rem; font-size: 0.8rem; }
+  .run-warnings div { border-radius: 8px; padding: 0.45rem 0.8rem; margin-bottom: 0.35rem; }
+  .run-warnings .warn { background: #fbe9c9; border: 1px solid #e3b25d; color: #5a3b00; }
+  .run-warnings .err { background: #fde0e0; border: 1px solid #e08f8f; color: #6b1212; }
+  #legend-down { display: none; }
+  .legend-signed #legend-down { display: inline-flex; }
   .restore { display: none; }
   .hide-tasks .restore[data-view=tasks], .hide-detail .restore[data-view=detail] { display: inline-block; }
   .panel-hide { cursor: pointer; background: none !important; border: none !important; color: var(--muted) !important;
@@ -102,7 +110,7 @@
   <div class="toolbar" id="controls-bar">
     <label>Model: <select id="model-select" disabled><option>loading...</option></select></label>
     <label>Task list: <select id="tasklist-select" disabled><option>&mdash;</option></select></label>
-    <label>Upload expression (CSV/TSV, gene id + sample columns): <input id="file-input" type="file" accept=".csv,.tsv,.txt,.gct"></label>
+    <label>Upload data (CSV/TSV: gene id first, then expression samples or a differential-expression table's columns): <input id="file-input" type="file" accept=".csv,.tsv,.txt,.gct"></label>
     <label>Example dataset: <button id="load-gtex-btn">Load bundled GTEx tissues</button></label>
     <label>Sample: <select id="sample-select" disabled><option>upload data first</option></select></label>
     <span id="status-msg"></span>
@@ -122,6 +130,7 @@
       <input id="load-input" type="file" accept=".json,application/json" hidden>
     </span>
   </div>
+  <div id="run-warnings" class="run-warnings" hidden></div>
   <div id="method-desc"></div>
 
   <div class="legend">
@@ -130,6 +139,7 @@
       <stop offset="0%" stop-color="var(--score-empty)"/><stop offset="100%" stop-color="var(--accent)"/>
     </linearGradient></defs><rect width="110" height="13" rx="4" fill="url(#scale-grad)"/></svg>
     <span style="color:var(--muted)">low&rarr;high</span>
+    <span id="legend-down"><span class="swatch" style="background:#8e44ad"></span> down-regulated (negative score; same scale)</span>
     <span><span class="swatch" style="background:var(--evidence-none)"></span> has GPR, no evidence</span>
     <span><span class="swatch" style="background:var(--score-empty);border:1px solid var(--hairline);"></span> no GPR</span>
     <span><span class="swatch" style="background:var(--surface);border:1.6px solid var(--met-node);border-radius:50%;"></span> internal met.</span>
@@ -146,9 +156,9 @@
           <table class="tasks">
             <thead><tr>
               <th data-sort="task_id">ID</th><th data-sort="description">Description</th>
-              <th data-sort="n_routes">Routes</th><th data-sort="score">Score</th>
+              <th data-sort="n_routes">Routes</th><th data-sort="score">Score</th><th data-sort="pvalue" id="pvalue-th" hidden>p-value</th>
             </tr></thead>
-            <tbody id="task-tbody"><tr><td colspan="4" class="placeholder">Loading tasks...</td></tr></tbody>
+            <tbody id="task-tbody"><tr><td colspan="5" class="placeholder">Loading tasks...</td></tr></tbody>
           </table>
         </div>
       </div>

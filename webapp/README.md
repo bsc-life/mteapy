@@ -35,7 +35,7 @@ the database.
 
 - **Model / Task list**: pick a model, then one of its task lists. Task
   ids are only unique within a list, so lists are never mixed in one table.
-- **Analysis bar**: pick a method (TAS or CellFie), set its parameters (the form is
+- **Analysis bar**: pick a method (TAS, CellFie or TIDE), set its parameters (the form is
   generated from `mteapy.methods`, the same definitions the CLI uses), load a
   dataset, press **Run**. Every task of the selected list is scored against
   *every* sample in a background worker (progress bar, Cancel); when it
@@ -44,6 +44,24 @@ the database.
   the model, task list or dataset clears the results. CellFie's thresholds
   are computed over the whole loaded dataset (as in the CLI), so a sample's
   CellFie score depends on the other samples.
+- **TIDE** takes a differential-expression table instead of expression: upload
+  it like any other file (gene id first; every numeric column is offered), pick
+  the **log-FC column** (and, to mask non-significant genes, a **p-value
+  column**, `Mask non-significant` and alpha -- a name that looks like
+  `log2FoldChange`/`pvalue` is preselected). One run scores one comparison; the
+  results table gains a **p-value** column (empirical, from the permutations; 0
+  is shown as `< 1/permutations`), scores keep their sign, and the network
+  colours down-regulated reactions in a second hue. The permutations are the
+  slow part (progress and Cancel work; raise *CPUs* to split them). TIDE-essential
+  is CLI-only for now.
+- **Input checks**: before anything runs, the server looks at the loaded data
+  against the chosen method and parameters, and the page shows the result under
+  the analysis bar. *Warnings* never block: a "log-FC" column with **no negative
+  values** (it looks like expression, not fold changes), implausibly large fold
+  changes, negative values fed to TAS/CellFie (they look like fold changes),
+  genes without a value. *Errors* keep Run disabled: a column that is not in the
+  table, masking without a p-value column, a p-value column outside [0, 1], a
+  constant column, no gene matching the model. The CLI prints the same warnings.
 - **Save / Load results**: *Save results* downloads a self-contained JSON file
   (scores, method + parameters, model key and sha256, a fingerprint of the
   task list's routes, and the scoring signal restricted to the genes the routes

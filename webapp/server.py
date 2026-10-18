@@ -30,6 +30,7 @@ import importlib.metadata
 import io
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -43,9 +44,10 @@ from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from mteapy import methods, registry, taskdb
+from mteapy import inputcheck, methods, registry, taskdb
 from mteapy.cellfie import calculate_GAL
 from mteapy.context_scoring import build_complex_cache, score_task, score_tasks_report
+from mteapy.tide import compute_TIDE
 from mteapy.network import build_route_graph, load_bigg_ids, resolve_boundary_ids
 from mteapy.task_model import build_metabolite_lookup
 from runs import RunManager, check_cancelled
@@ -241,13 +243,17 @@ async def api_upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(400, "No numeric sample columns found in the uploaded file")
     dataset_id = str(uuid.uuid4())
     _DATASETS[dataset_id] = df
-    return {"dataset_id": dataset_id, "samples": list(df.columns), "n_genes": len(df)}
+    return _dataset_info(dataset_id, df)
+
+
+def _dataset_info(dataset_id: str, df: pd.DataFrame) -> dict:
+    return {"dataset_id": dataset_id, "samples": list(df.columns), "n_genes": len(df),
+            "suggested": _suggest_columns(list(df.columns))}
 
 
 @app.get("/api/datasets/{dataset_id}")
 async def api_dataset_info(dataset_id: str):
-    df = get_dataset(dataset_id)
-    return {"dataset_id": dataset_id, "samples": list(df.columns), "n_genes": len(df)}
+    return _dataset_info(dataset_id, get_dataset(dataset_id))
 
 
 @app.get("/api/methods")
@@ -278,58 +284,97 @@ def _task_list_structures(ctx: ModelContext, task_list: str):
         return ctx.list_routes[task_list], ctx.list_complexes[task_list], ctx.list_descriptions[task_list]
 
 
-def _scoring_signal(method_id: str, params: dict, expr: pd.DataFrame):
+def _scoring_conventions(method_id: str, params: dict) -> tuple[str, str]:
+    """(aggregation, or_func) a method scores routes with."""
+    if method_id == "TAS":
+        return params["aggregation"], params["or_func"]
+    if method_id == "CellFie":
+        return "mean", "max"
+    if method_id == "TIDE":
+        return "mean", params["or_func"]
+    raise ValueError(f"no scoring defined for method {method_id!r}")
+
+
+def _scoring_signal(method_id: str, params: dict, data: pd.DataFrame):
     """(gene signal, aggregation, or_func) that a method scores routes with.
 
     TAS projects the expression itself; CellFie first turns it into gene
     activity levels (thresholds are taken over the whole dataset, so this is
-    computed once per run, never per sample)."""
-    if method_id == "TAS":
-        return expr, params["aggregation"], params["or_func"]
+    computed once per run, never per sample); TIDE's `data` already is the
+    (masked) log-fold-change column to score."""
+    aggregation, or_func = _scoring_conventions(method_id, params)
     if method_id == "CellFie":
         gal = calculate_GAL(
-            expr, thresh_type=params["threshold_type"], local_thresh_type=params["local_threshold_type"],
+            data, thresh_type=params["threshold_type"], local_thresh_type=params["local_threshold_type"],
             minmaxmean_thresh_type=params["minmaxmean_threshold_type"], upper_bound=params["upper_bound"],
             lower_bound=params["lower_bound"], global_thresh_type=params["global_threshold_type"],
             global_value=params["global_value"], log_transformed=params["log_transformed"],
         )
         # A gene that is zero everywhere has threshold 0 -> 0/0; it simply has no activity.
-        return gal.fillna(0.0), "mean", "max"
-    raise ValueError(f"no scoring defined for method {method_id!r}")
+        return gal.fillna(0.0), aggregation, or_func
+    return data, aggregation, or_func
 
 
-def _execute_run(run, ctx: ModelContext, expr: pd.DataFrame):
+def _execute_run(run, ctx: ModelContext, data: pd.DataFrame):
     cfg = run.config
     routes, complex_cache, descriptions = _task_list_structures(ctx, cfg["task_list"])
     check_cancelled(run)
-    run.total = expr.shape[1]
-    signal, aggregation, or_func = _scoring_signal(cfg["method"], cfg["params"], expr)
+    run.total = data.shape[1]
+    signal, aggregation, or_func = _scoring_signal(cfg["method"], cfg["params"], data)
     check_cancelled(run)
 
     def progress(done, total):
         run.done, run.total = done, total
         check_cancelled(run)
 
-    frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
-                                progress=progress, complex_cache=complex_cache)
-    samples = list(expr.columns)
-    tasks = [{
-        "task_id": task_id, "description": descriptions.get(task_id, ""), "n_routes": len(routes[task_id]),
-        "scores": [float(x) for x in frames["scores"].loc[task_id]],
-        "complete": [bool(x) for x in frames["complete"].loc[task_id]],
-        "tied": [bool(x) for x in frames["tied"].loc[task_id]],
-    } for task_id in frames["scores"].index]
+    pvalues = None
+    if cfg["method"] == "TIDE":
+        # The real scores are one cheap pass; the permutations are the run.
+        params = cfg["params"]
+        frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
+                                    complex_cache=complex_cache)
+        run.unit, run.done, run.total = "permutations", 0, params["n_permutations"]
+        found = compute_TIDE(
+            signal, params["lfc_col"], None, ctx.model, or_func, params["n_permutations"], params["n_cpus"],
+            False, params["random_seed"], mapping_strategy="context-aware", tasks_routes=routes,
+            complex_cache=complex_cache, permutation_strategy=params["permutation_strategy"], progress=progress,
+        )
+        pvalues = dict(zip(found["task_id"], (float(p) for p in found["pvalue"])))
+    else:
+        frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
+                                    progress=progress, complex_cache=complex_cache)
+    samples = list(signal.columns)
+    tasks = []
+    for task_id in frames["scores"].index:
+        task = {
+            "task_id": task_id, "description": descriptions.get(task_id, ""), "n_routes": len(routes[task_id]),
+            "scores": [float(x) for x in frames["scores"].loc[task_id]],
+            "complete": [bool(x) for x in frames["complete"].loc[task_id]],
+            "tied": [bool(x) for x in frames["tied"].loc[task_id]],
+        }
+        if pvalues is not None:
+            task["pvalues"] = [pvalues[task_id]]
+        tasks.append(task)
     return {"samples": samples, "tasks": tasks, "frames": frames, "signal": signal,
             "aggregation": aggregation, "or_func": or_func}
 
 
-@app.post("/api/runs", status_code=202)
-async def api_start_run(body: dict = Body(...)):
-    """Start scoring `task_list` of `model` against every sample of `dataset_id`.
+_LFC_NAME = re.compile(r"(?i)^(log_?2?_?fold_?change|log_?2?_?fc|l2fc|lfc|logfc|fold_?change)$|log2?fc|lfc|fold")
+_PVALUE_NAMES = ("pvalue", "p_value", "p.value", "p-value", "pval", "p_val", "padj", "p_adj", "adj.p.val", "fdr", "qvalue")
 
-    Body: ``{model, task_list, dataset_id, method, params}``. Returns the
-    run's info at once; poll ``GET /api/runs/{run_id}`` for progress.
-    """
+
+def _suggest_columns(columns) -> dict:
+    """Best guess at the log-FC and p-value columns of a differential-expression table."""
+    lfc = next((c for c in columns if _LFC_NAME.search(str(c))), None)
+    lowered = {str(c).lower(): c for c in columns}
+    pvalue = next((lowered[n] for n in _PVALUE_NAMES if n in lowered), None)
+    return {"lfc_col": lfc, "pvalue_col": pvalue}
+
+
+def _prepare_run(body: dict):
+    """Validate a run request against the loaded data. Returns
+    ``(method, params, ctx, data, matched, warnings)``; a request that cannot
+    be scored raises a 400 with every reason found."""
     missing = [k for k in ("model", "task_list", "dataset_id", "method") if not body.get(k)]
     if missing:
         raise HTTPException(400, f"missing field(s): {missing}")
@@ -340,18 +385,88 @@ async def api_start_run(body: dict = Body(...)):
         raise HTTPException(400, exc.args[0]) from None
     ctx = get_context(body["model"])
     _check_task_list(ctx, body["task_list"])
-    expr = get_dataset(body["dataset_id"])
+    table = get_dataset(body["dataset_id"])
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    data = table
+    if method.id == "TIDE":
+        columns = list(table.columns)
+        lfc = params["lfc_col"] or _suggest_columns(columns)["lfc_col"]
+        pcol = params["pvalue_col"]
+        if lfc is None:
+            raise HTTPException(400, f"Choose the log-FC column (columns: {columns})")
+        for name, col in (("log-FC", lfc), ("p-value", pcol)):
+            if col is not None and col not in columns:
+                raise HTTPException(400, f"The {name} column {col!r} is not in the loaded table (columns: {columns})")
+        params["lfc_col"] = lfc
+        if pcol == lfc:
+            errors.append("the log-FC and p-value columns are the same")
+        e, w = inputcheck.check_lfc(table[lfc], lfc)
+        errors += e
+        warnings += w
+        lfc_values = table[lfc]
+        if params["mask_lfc_values"]:
+            if pcol is None:
+                errors.append("masking non-significant fold changes needs a p-value column")
+            else:
+                e, w = inputcheck.check_pvalues(table[pcol], pcol)
+                errors += e
+                warnings += w
+                if not e:
+                    # Same rule as `mteapy.utils.mask_lfc_values`: a missing p-value counts as 1.
+                    lfc_values = table[lfc].where(table[pcol].fillna(1) < params["alpha"], 0.0)
+                    if not (lfc_values.fillna(0) != 0).any():
+                        errors.append(f"no gene has {pcol} below {params['alpha']:g}: every fold change is masked to 0")
+        n_missing = int(lfc_values.isna().sum())
+        if n_missing:
+            warnings.append(f"{n_missing} gene(s) have no value in '{lfc}'; they are treated as 0 (no change)")
+        data = pd.DataFrame({lfc: lfc_values.fillna(0.0).astype(float)})
+        params["n_cpus"] = max(1, min(params["n_cpus"], os.cpu_count() or 1))
+    else:
+        # absmax is the signed-signal setting, so negative values are what the user asked for there.
+        if params.get("or_func") != "absmax":
+            e, w = inputcheck.check_expression(table, method.id)
+            errors += e
+            warnings += w
 
     model_genes = {g.id for g in ctx.model.genes}
-    matched = len(model_genes & set(expr.index))
+    matched = len(model_genes & set(data.index))
     if matched == 0:
-        raise HTTPException(400, f"None of the dataset's {len(expr)} genes is a gene of this model "
-                                 f"(the model uses {ctx.entry.gene_id_type or 'its own'} gene ids, e.g. "
-                                 f"{sorted(model_genes)[:3]}); check the id column")
+        errors.append(f"None of the dataset's {len(data)} genes is a gene of this model "
+                      f"(the model uses {ctx.entry.gene_id_type or 'its own'} gene ids, e.g. "
+                      f"{sorted(model_genes)[:3]}); check the id column")
+    if errors:
+        raise HTTPException(400, "; ".join(errors))
+    return method, params, ctx, data, matched, warnings
+
+
+@app.post("/api/runs/check")
+async def api_check_run(body: dict = Body(...)):
+    """Dry-run validation of a run request: what would stop it (`errors`) and
+    what looks wrong but would still run (`warnings`), without starting it."""
+    try:
+        *_, warnings = _prepare_run(body)
+    except HTTPException as exc:
+        if exc.status_code == 400:
+            return {"ok": False, "errors": [str(exc.detail)], "warnings": []}
+        raise
+    return {"ok": True, "errors": [], "warnings": warnings}
+
+
+@app.post("/api/runs", status_code=202)
+async def api_start_run(body: dict = Body(...)):
+    """Start scoring `task_list` of `model` with `method` on `dataset_id`
+    (every sample of an expression matrix; one comparison for TIDE).
+
+    Body: ``{model, task_list, dataset_id, method, params}``. Returns the
+    run's info at once; poll ``GET /api/runs/{run_id}`` for progress.
+    """
+    method, params, ctx, data, matched, warnings = _prepare_run(body)
     config = {"model": body["model"], "task_list": body["task_list"], "dataset_id": body["dataset_id"],
               "method": method.id, "params": params}
-    run = RUNS.submit(config, lambda r: _execute_run(r, ctx, expr), genes_matched=matched)
-    return {**run.info(), "model_genes": len(model_genes)}
+    run = RUNS.submit(config, lambda r: _execute_run(r, ctx, data), genes_matched=matched, warnings=warnings)
+    return {**run.info(), "model_genes": len({g.id for g in ctx.model.genes})}
 
 
 def _get_run(run_id: str):
@@ -387,7 +502,7 @@ RESULTS_FORMAT_VERSION = 1
 
 
 def _signal_kind(method_id: str) -> str:
-    return "gene_activity_levels" if method_id == "CellFie" else "expression"
+    return {"CellFie": "gene_activity_levels", "TIDE": "log_fold_change"}.get(method_id, "expression")
 
 
 def _relevant_genes(ctx: ModelContext, task_list: str, signal: pd.DataFrame) -> list[str]:
@@ -411,10 +526,17 @@ async def api_export_run(run_id: str, format: str = "json"):
     cfg, result = run.config, run.result
     stem = f"mteapy_{cfg['method']}_{cfg['model']}_{cfg['task_list']}"
     if format == "tsv":
-        lines = ["\t".join(["task_id", "description", "n_routes", *result["samples"]])]
+        with_p = any("pvalues" in t for t in result["tasks"])
+        head = [x for sample in result["samples"] for x in ([sample, f"{sample}_pvalue"] if with_p else [sample])]
+        lines = ["\t".join(["task_id", "description", "n_routes", *head])]
         for t in result["tasks"]:
             desc = (t["description"] or "").replace("\t", " ")
-            lines.append("\t".join([t["task_id"], desc, str(t["n_routes"]), *(repr(x) for x in t["scores"])]))
+            cells = []
+            for i, score in enumerate(t["scores"]):
+                cells.append(repr(score))
+                if with_p:
+                    cells.append(repr(t["pvalues"][i]) if "pvalues" in t else "NA")
+            lines.append("\t".join([t["task_id"], desc, str(t["n_routes"]), *cells]))
         return Response("\n".join(lines) + "\n", media_type="text/tab-separated-values",
                         headers={"Content-Disposition": f'attachment; filename="{stem}.tsv"'})
     if format != "json":
@@ -436,6 +558,7 @@ async def api_export_run(run_id: str, format: str = "json"):
         "task_list": {"name": cfg["task_list"],
                       "routes_fingerprint": taskdb.task_list_routes_fingerprint(ctx.db, cfg["task_list"])},
         "method": {"id": cfg["method"], "params": cfg["params"]},
+        "warnings": run.warnings,
         "samples": result["samples"],
         "tasks": result["tasks"],
         "signal": {"kind": _signal_kind(cfg["method"]), "genes": genes, "samples": result["samples"],
@@ -483,6 +606,8 @@ async def api_import_run(bundle: dict = Body(...)):
                 raise ValueError(f"task {t['task_id']!r} does not match the database")
             if not (len(t["scores"]) == len(t["complete"]) == len(t["tied"]) == len(samples)):
                 raise ValueError(f"task {t['task_id']!r} does not have one value per sample")
+            if "pvalues" in t and len(t["pvalues"]) != len(samples):
+                raise ValueError(f"task {t['task_id']!r} does not have one p-value per sample")
         if list(sig["samples"]) != list(samples):
             raise ValueError("signal samples differ from the result samples")
         signal = pd.DataFrame(sig["values"], index=sig["genes"], columns=sig["samples"], dtype=float)
@@ -491,8 +616,8 @@ async def api_import_run(bundle: dict = Body(...)):
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(400, f"Malformed results file: {exc.args[0] if exc.args else exc!r}") from None
 
-    aggregation, or_func = (("mean", "max") if method.id == "CellFie"
-                            else (params["aggregation"], params["or_func"]))
+    aggregation, or_func = _scoring_conventions(method.id, params)
+    warnings = [w for w in bundle.get("warnings", []) if isinstance(w, str)]
     dataset_id = None
     if sig.get("kind") == "expression":
         # The embedded subset is a valid expression matrix for the model's genes, so it can be re-run.
@@ -502,7 +627,7 @@ async def api_import_run(bundle: dict = Body(...)):
               "params": params, "loaded": True, "saved_at": bundle.get("created")}
     result = {"samples": list(samples), "tasks": tasks, "signal": signal,
               "aggregation": aggregation, "or_func": or_func}
-    run = RUNS.add_finished(config, result, genes_matched=len(signal))
+    run = RUNS.add_finished(config, result, genes_matched=len(signal), warnings=warnings)
     return {**run.info(), "dataset_id": dataset_id, "n_tasks": len(tasks), "samples": list(samples)}
 
 

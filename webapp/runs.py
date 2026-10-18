@@ -31,6 +31,8 @@ class Run:
     total: int = 0
     error: str | None = None
     genes_matched: int | None = None
+    unit: str = "samples"            # what done/total count: samples, or permutations for TIDE
+    warnings: list = field(default_factory=list)   # input checks that passed with a caution
     created: float = field(default_factory=time.time)
     started: float | None = None
     finished: float | None = None
@@ -41,6 +43,7 @@ class Run:
         return {
             "run_id": self.run_id, "status": self.status, "done": self.done, "total": self.total,
             "error": self.error, "genes_matched": self.genes_matched, "config": self.config,
+            "unit": self.unit, "warnings": self.warnings,
             "seconds": (None if self.started is None else round((self.finished or time.time()) - self.started, 2)),
         }
 
@@ -52,10 +55,10 @@ class RunManager:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mteapy-run")
         self._max_runs = max_runs
 
-    def submit(self, config: dict, job, genes_matched: int | None = None) -> Run:
+    def submit(self, config: dict, job, genes_matched: int | None = None, warnings: list | None = None) -> Run:
         """Queue `job(run)` -- it must return the run's result dict, call
         `check_cancelled(run)` / update `run.done`/`run.total` as it goes."""
-        run = Run(uuid.uuid4().hex[:12], config, genes_matched=genes_matched)
+        run = Run(uuid.uuid4().hex[:12], config, genes_matched=genes_matched, warnings=list(warnings or []))
         with self._lock:
             self._runs[run.run_id] = run
             while len(self._runs) > self._max_runs:
@@ -66,9 +69,10 @@ class RunManager:
         self._executor.submit(self._execute, run, job)
         return run
 
-    def add_finished(self, config: dict, result: dict, genes_matched: int | None = None) -> Run:
+    def add_finished(self, config: dict, result: dict, genes_matched: int | None = None,
+                     warnings: list | None = None) -> Run:
         """Register an already-computed run (results loaded from a file)."""
-        run = Run(uuid.uuid4().hex[:12], config, genes_matched=genes_matched)
+        run = Run(uuid.uuid4().hex[:12], config, genes_matched=genes_matched, warnings=list(warnings or []))
         run.status, run.result = "done", result
         run.started = run.finished = time.time()
         with self._lock:

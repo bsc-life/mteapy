@@ -14,6 +14,9 @@ let currentModel = null;     // model key, e.g. "Human-GEM-2.0.1"
 let currentTaskList = null;  // task list name within that model
 let modelsInfo = [];         // [{key, name, version, available, task_lists: [{name, n_tasks, ...}]}]
 let currentRun = null;       // {run_id, config, samples, byTask: {task_id: {scores, complete, tied}}} once a run is done
+let datasetColumns = [];     // numeric columns of the loaded table (samples, or a DE table's columns)
+let datasetSuggested = {};   // {lfc_col, pvalue_col}: best guess at a DE table's columns
+let checkBlocked = false;    // the pre-run check found an error: Run stays disabled
 let methodsInfo = [];        // [{id, label, description, params: [{name, label, type, default, help, choices}]}]
 let allTasks = [];      // [{task_id, description, n_routes, score, is_tied, is_complete, winning_route_ids}]
 let sortKey = "task_id";
@@ -109,11 +112,9 @@ taskListSelect.addEventListener("change", onTaskListChange);
 
 document.getElementById("load-gtex-btn").addEventListener("click", async () => {
   if (!window.GTEX_DATASET_ID) { setStatus("No bundled GTEx dataset available on this server."); return; }
-  datasetId = window.GTEX_DATASET_ID;
-  const res = await fetch(`/api/datasets/${datasetId}`);
+  const res = await fetch(`/api/datasets/${window.GTEX_DATASET_ID}`);
   const info = await res.json();
-  clearRun();
-  populateSampleSelect(info.samples);
+  onDatasetLoaded(info);
   setStatus(`Loaded GTEx example: ${info.samples.length} tissues.`);
 });
 
@@ -126,9 +127,7 @@ document.getElementById("file-input").addEventListener("change", async (ev) => {
   const res = await fetch("/api/datasets", { method: "POST", body: form });
   if (!res.ok) { setStatus(`Upload failed: ${(await res.json()).detail || res.statusText}`); return; }
   const info = await res.json();
-  datasetId = info.dataset_id;
-  clearRun();
-  populateSampleSelect(info.samples);
+  onDatasetLoaded(info);
   setStatus(`Loaded ${file.name}: ${info.n_genes} genes, ${info.samples.length} sample(s).`);
 });
 
@@ -181,27 +180,58 @@ async function loadMethods() {
 
 function currentMethod() { return methodsInfo.find(m => m.id === methodSelect.value); }
 
+const INPUT_KIND_NOTE = {
+  expression: "Input: an expression matrix (genes x samples, non-negative).",
+  log_fold_change: "Input: a differential-expression table (log fold changes, so negative values; optional p-values).",
+};
+
+// A "column" parameter picks one of the loaded table's columns; the table's best
+// guess (a log-FC / p-value looking name) is preselected, an optional one can be left empty.
+function fillColumnSelect(select, p) {
+  const keep = select.value;
+  select.innerHTML = "";
+  if (p.optional) { const o = document.createElement("option"); o.value = ""; o.textContent = "(none)"; select.appendChild(o); }
+  if (!datasetColumns.length && !p.optional) { const o = document.createElement("option"); o.value = ""; o.textContent = "(load data)"; select.appendChild(o); }
+  datasetColumns.forEach(c => { const o = document.createElement("option"); o.value = o.textContent = c; select.appendChild(o); });
+  const guess = datasetSuggested[p.name];
+  select.value = [...select.options].some(o => o.value === keep && keep !== "") ? keep
+    : (guess && datasetColumns.includes(guess) ? guess : (p.optional ? "" : (datasetColumns[0] || "")));
+}
+
+function refreshColumnParams() {
+  const m = currentMethod();
+  if (!m) return;
+  m.params.filter(p => p.type === "column").forEach(p => {
+    const el = paramsHost.querySelector(`[data-param="${p.name}"]`);
+    if (el) fillColumnSelect(el, p);
+  });
+}
+
 function renderParams() {
   const m = currentMethod();
   paramsHost.innerHTML = "";
-  document.getElementById("method-desc").textContent = m ? m.description : "";
+  document.getElementById("method-desc").textContent = m ? `${m.description} ${INPUT_KIND_NOTE[m.input_kind] || ""}` : "";
   if (!m) return;
   m.params.forEach(p => {
     const wrap = document.createElement("label");
     wrap.className = "param"; wrap.title = p.help;
     wrap.append(`${p.label}: `);
     let input;
-    if (p.type === "choice") {
+    if (p.type === "column") {
+      input = document.createElement("select");
+      fillColumnSelect(input, p);
+    } else if (p.type === "choice") {
       input = document.createElement("select");
       p.choices.forEach(c => { const o = document.createElement("option"); o.value = o.textContent = c; input.appendChild(o); });
       input.value = p.default;
     } else if (p.type === "bool") {
       input = document.createElement("input"); input.type = "checkbox"; input.checked = !!p.default;
     } else {
-      input = document.createElement("input"); input.type = "number"; input.value = p.default;
+      input = document.createElement("input"); input.type = "number"; input.value = p.default ?? "";
       input.step = p.type === "int" ? "1" : "any";
       if (p.min !== null) input.min = p.min;
       if (p.max !== null) input.max = p.max;
+      if (p.optional) input.placeholder = "auto";
     }
     input.dataset.param = p.name; input.dataset.type = p.type;
     wrap.dataset.when = JSON.stringify(p.when || []);
@@ -209,10 +239,9 @@ function renderParams() {
     paramsHost.appendChild(wrap);
   });
   updateParamVisibility();
+  scheduleCheck();
 }
 
-// A parameter that only matters for some settings of others (e.g. the global
-// threshold value) is shown only while those hold.
 function updateParamVisibility() {
   const current = collectParams();
   paramsHost.querySelectorAll(".param").forEach(wrap => {
@@ -224,25 +253,74 @@ function updateParamVisibility() {
 function collectParams() {
   const out = {};
   paramsHost.querySelectorAll("[data-param]").forEach(el => {
+    const numeric = el.dataset.type === "int" || el.dataset.type === "float";
     out[el.dataset.param] = el.dataset.type === "bool" ? el.checked
-      : (el.dataset.type === "int" || el.dataset.type === "float") ? Number(el.value) : el.value;
+      : numeric ? (el.value === "" ? null : Number(el.value))
+      : el.dataset.type === "column" ? (el.value === "" ? null : el.value) : el.value;
   });
   return out;
 }
 
 function updateRunButton() {
   document.getElementById("save-btn").disabled = document.getElementById("tsv-btn").disabled = !currentRun;
-  runBtn.disabled = !(datasetId && currentModel && currentTaskList && currentMethod() && !activeRunId);
+  runBtn.disabled = !(datasetId && currentModel && currentTaskList && currentMethod() && !activeRunId) || checkBlocked;
   runBtn.title = datasetId ? "Score every task of the selected list against every sample"
                            : "Load an expression dataset first";
 }
 
 methodSelect.addEventListener("change", renderParams);
-paramsHost.addEventListener("change", updateParamVisibility);
+paramsHost.addEventListener("change", () => { updateParamVisibility(); scheduleCheck(); });
+
+// ---------- pre-run input check ----------
+// The server looks at the loaded data against the chosen method and parameters
+// before anything runs: errors keep Run disabled, warnings (e.g. a "log-FC" column
+// with no negative values, which looks like expression) are shown but never block.
+
+const warnBox = document.getElementById("run-warnings");
+let checkTimer = null, checkSeq = 0;
+
+function showChecks(errors, warnings) {
+  warnBox.innerHTML = "";
+  errors.forEach(t => { const d = document.createElement("div"); d.className = "err"; d.textContent = t; warnBox.appendChild(d); });
+  warnings.forEach(t => { const d = document.createElement("div"); d.className = "warn"; d.textContent = `Warning: ${t}`; warnBox.appendChild(d); });
+  warnBox.hidden = errors.length + warnings.length === 0;
+  checkBlocked = errors.length > 0;
+  updateRunButton();
+}
+
+function scheduleCheck() {
+  clearTimeout(checkTimer);
+  checkTimer = setTimeout(runCheck, 250);
+}
+
+async function runCheck() {
+  const m = currentMethod();
+  const seq = ++checkSeq;
+  if (activeRunId) return;       // a run in flight keeps showing the warnings it started with
+  if (!(datasetId && currentModel && currentTaskList && m)) { showChecks([], []); return; }
+  const body = { model: currentModel, task_list: currentTaskList, dataset_id: datasetId, method: m.id, params: collectParams() };
+  try {
+    const res = await fetch("/api/runs/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (seq !== checkSeq) return;
+    if (!res.ok) showChecks([typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)], []);
+    else showChecks(data.errors, data.warnings);
+  } catch (e) { if (seq === checkSeq) showChecks([], []); }
+}
+
+function onDatasetLoaded(info) {
+  datasetId = info.dataset_id;
+  datasetColumns = info.samples;
+  datasetSuggested = info.suggested || {};
+  clearRun();
+  populateSampleSelect(info.samples);
+  refreshColumnParams();
+  scheduleCheck();
+}
 
 function clearRun(note) {
   currentRun = null;
-  allTasks = allTasks.map(t => ({ ...t, score: null, is_tied: false, is_complete: false, winning_route_ids: [] }));
+  allTasks = allTasks.map(t => ({ ...t, score: null, pvalue: null, is_tied: false, is_complete: false, winning_route_ids: [] }));
   renderTaskTable();
   if (note) setRunStatus(note);
   else if (!activeRunId) setRunStatus("");
@@ -255,8 +333,9 @@ function applyRunScores() {
   if (idx < 0) return;
   allTasks = allTasks.map(t => {
     const r = currentRun.byTask[t.task_id];
-    return r ? { ...t, score: r.scores[idx], is_tied: r.tied[idx], is_complete: r.complete[idx] }
-             : { ...t, score: null, is_tied: false, is_complete: false };
+    return r ? { ...t, score: r.scores[idx], is_tied: r.tied[idx], is_complete: r.complete[idx],
+                 pvalue: r.pvalues ? r.pvalues[idx] : null }
+             : { ...t, score: null, is_tied: false, is_complete: false, pvalue: null };
   });
   renderTaskTable();
 }
@@ -286,7 +365,8 @@ async function pollRun(info) {
   for (;;) {
     runProgress.max = Math.max(info.total, 1);
     runProgress.value = info.done;
-    setRunStatus(info.status === "queued" ? "Queued..." : `Scoring ${info.done}/${info.total} samples...`);
+    setRunStatus(info.status === "queued" ? "Queued..." : info.total === 0 ? "Starting..."
+      : info.unit === "permutations" ? `Permutation test ${info.done}/${info.total}...` : `Scoring ${info.done}/${info.total} samples...`);
     if (info.status !== "queued" && info.status !== "running") break;
     await new Promise(r => setTimeout(r, 350));
     const res = await fetch(`/api/runs/${runId}`);
@@ -306,6 +386,8 @@ async function pollRun(info) {
     const p = Object.entries(info.config.params).map(([k, v]) => `${k}=${v}`).join(", ");
     setRunStatus(`${info.config.method} (${p}) done in ${info.seconds}s: ${data.tasks.length} tasks x ${data.samples.length} samples ` +
                  `(${info.genes_matched} model genes found in the data).`);
+    showChecks([], info.warnings || []);
+    if (data.samples.join("\u0000") !== [...sampleSelect.options].map(o => o.value).join("\u0000")) populateSampleSelect(data.samples);
     applyRunScores();
     if (selectedKey) selectTask(selectedKey);
   } else if (info.status === "cancelled") {
@@ -352,19 +434,24 @@ loadInput.addEventListener("change", async () => {
   renderParams();
   paramsHost.querySelectorAll("[data-param]").forEach(el => {
     const v = cfg.params[el.dataset.param];
-    if (el.dataset.type === "bool") el.checked = !!v; else el.value = v;
+    if (el.tagName === "SELECT" && v && ![...el.options].some(o => o.value === v)) {
+      const o = document.createElement("option"); o.value = o.textContent = v; el.appendChild(o);   // saved column, table not loaded
+    }
+    if (el.dataset.type === "bool") el.checked = !!v; else el.value = v ?? "";
   });
   updateParamVisibility();
   datasetId = info.dataset_id;
+  datasetColumns = info.dataset_id ? info.samples : [];
+  datasetSuggested = {};
   const data = await (await fetch(`/api/runs/${info.run_id}/results`)).json();
   currentRun = { run_id: info.run_id, config: cfg, samples: data.samples,
                  byTask: Object.fromEntries(data.tasks.map(t => [t.task_id, t])) };
   populateSampleSelect(data.samples);
   const p = Object.entries(cfg.params).map(([k, v]) => `${k}=${v}`).join(", ");
   setRunStatus(`Loaded ${cfg.method} (${p}), saved ${cfg.saved_at || "earlier"}: ${data.tasks.length} tasks x ` +
-               `${data.samples.length} samples.` + (datasetId ? "" : " (No expression to re-run: CellFie results are loaded as scores only.)"));
+               `${data.samples.length} samples.` + (datasetId ? "" : " (Nothing to re-run: these results are loaded as scores only.)"));
   applyRunScores();
-  updateRunButton();
+  showChecks([], info.warnings || []);
 });
 
 runBtn.addEventListener("click", startRun);
@@ -400,9 +487,13 @@ function renderTaskTable() {
     return 0;
   });
 
+  const showP = !!currentRun && Object.values(currentRun.byTask).some(t => t.pvalues);
+  document.getElementById("pvalue-th").hidden = !showP;
+  document.querySelector(".wrap").classList.toggle("has-pvalue", showP);
+  document.querySelector(".wrap").classList.toggle("legend-signed", !!currentRun && currentRun.config.method === "TIDE");
   taskTbody.innerHTML = "";
   if (!rows.length) {
-    taskTbody.innerHTML = `<tr><td colspan="4" class="placeholder">No matching tasks.</td></tr>`;
+    taskTbody.innerHTML = `<tr><td colspan="${showP ? 5 : 4}" class="placeholder">No matching tasks.</td></tr>`;
     return;
   }
   for (const t of rows) {
@@ -416,10 +507,21 @@ function renderTaskTable() {
       <td>${t.description || ""}</td>
       <td>${t.n_routes}</td>
       <td>${scoreCell}</td>
+      ${showP ? `<td>${formatPvalue(t.pvalue)}</td>` : ""}
     `;
     tr.addEventListener("click", () => selectTask(t.task_id));
     taskTbody.appendChild(tr);
   }
+}
+
+// An empirical p-value is a count out of the permutations, so 0 means "below 1/N", not zero.
+function formatPvalue(p) {
+  if (p === null || p === undefined) return `<span class="placeholder">&mdash;</span>`;
+  if (p === 0) {
+    const n = currentRun && currentRun.config.params.n_permutations;
+    return n ? `&lt; ${(1 / n).toPrecision(1)}` : "0";
+  }
+  return p < 0.001 ? p.toExponential(1) : p.toFixed(3);
 }
 
 function scorePillColor(t) {
@@ -451,14 +553,19 @@ async function selectTask(taskId) {
 // Route network renderer (ported from route_network_template_v2.html)
 // ==========================================================================
 
+// Colour by the size of a reaction's score on the log scale, accent for positive
+// scores and a second hue for negative ones (TIDE: down-regulated; the sign is
+// kept by the signed OR function). Expression scores are never negative.
+const DOWN_COLOR = "#8e44ad";
 function scaleFor(panel) {
-  const scores = panel.nodes
+  const mags = panel.nodes
     .filter(n => n.type === "reaction" && (n.evidence === "supported" || n.evidence === "ambiguous"))
-    .map(n => Math.log1p(n.score || 0));
-  const max = Math.max(1e-6, ...scores);
-  return d3.scaleSequential().domain([0, max]).interpolator(t => d3.interpolate(
-    getComputedColor("--score-empty"), getComputedColor("--accent")
-  )(t));
+    .map(n => Math.log1p(Math.abs(n.score || 0)));
+  const max = Math.max(1e-6, ...mags);
+  return score => {
+    const t = Math.min(1, Math.log1p(Math.abs(score)) / max);
+    return d3.interpolate(getComputedColor("--score-empty"), score < 0 ? DOWN_COLOR : getComputedColor("--accent"))(t);
+  };
 }
 function getComputedColor(varName) {
   return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || "#999";
@@ -472,7 +579,7 @@ function nodeFillColor(d, colorScale) {
   }
   if (d.evidence === "no_evidence") return getComputedColor("--evidence-none");
   if (d.evidence === "no_gpr") return getComputedColor("--score-empty");
-  return colorScale(Math.log1p(d.score || 0));
+  return colorScale(d.score || 0);
 }
 
 function widthScaleFor(panel) {

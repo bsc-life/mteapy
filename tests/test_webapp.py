@@ -70,7 +70,8 @@ def test_models_and_methods_are_listed(client):
     assert model["key"] == "toy-1" and model["available"] and model["problems"] == []
     assert [t["name"] for t in model["task_lists"]] == ["ToyTasks"]
     described = {m["id"]: m for m in client.get("/api/methods").json()["methods"]}
-    assert list(described) == ["TAS", "CellFie"]
+    assert list(described) == ["TAS", "CellFie", "TIDE"]
+    assert described["TIDE"]["input_kind"] == "log_fold_change" and described["TAS"]["input_kind"] == "expression"
     assert {p["name"] for p in described["TAS"]["params"]} == {"aggregation", "or_func"}
     upper = next(p for p in described["CellFie"]["params"] if p["name"] == "global_value")
     assert upper["when"] == [["threshold_type", "global"]]
@@ -275,3 +276,134 @@ def test_import_refuses_files_that_do_not_match_this_installation(client):
     assert attempt(lambda b: b["tasks"][0].update(n_routes=7)).status_code == 400
     assert attempt(lambda b: b["tasks"][0].update(scores=[1.0])).status_code == 400
     assert attempt(lambda b: b.pop("signal")).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# TIDE and input checks
+# ---------------------------------------------------------------------------
+
+DE = "geneID\tlog2FoldChange\tpvalue\tbaseMean\ng1\t2.0\t0.001\t50\ng2\t-1.5\t0.2\t40\ng3\t3.0\t0.01\t10\ng4\t-0.5\t0.9\t5\ng_tr\t1.0\t0.5\t7\n"
+
+
+def _tide(client, text=DE, params=None, **kw):
+    ds = _upload(client, text)
+    body = {"lfc_col": "log2FoldChange", "n_permutations": 20, "random_seed": 3}
+    body.update(params or {})
+    return ds, _run(client, ds, method="TIDE", params=body, **kw)
+
+
+def test_dataset_info_suggests_the_de_columns(client):
+    info = client.get(f"/api/datasets/{_upload(client, DE)}").json()
+    assert info["suggested"] == {"lfc_col": "log2FoldChange", "pvalue_col": "pvalue"}
+    assert client.get(f"/api/datasets/{_upload(client)}").json()["suggested"] == {"lfc_col": None, "pvalue_col": None}
+
+
+def test_tide_run_matches_the_library_and_reports_pvalues(client, toy_model):
+    import pandas as pd
+    from mteapy.tide import compute_TIDE
+
+    ds, started = _tide(client)
+    assert started.status_code == 202, started.text
+    info = _wait(client, started.json()["run_id"])
+    assert info["status"] == "done" and info["unit"] == "permutations" and info["done"] == info["total"] == 20
+    results = client.get(f"/api/runs/{info['run_id']}/results").json()
+    assert results["samples"] == ["log2FoldChange"]
+
+    table = pd.read_csv(io.StringIO(DE), sep="\t", index_col=0)
+    conn = taskdb.connect(str(client.server.MODELS["toy-1"].db_path))
+    routes = taskdb.load_task_list_routes(conn, "ToyTasks")
+    from mteapy.context_scoring import build_complex_cache
+    cache = build_complex_cache(toy_model, {r for rs in routes.values() for x in rs.values() for r in x})
+    expected = compute_TIDE(table, "log2FoldChange", None, toy_model, "absmax", 20, 1, False, 3,
+                            mapping_strategy="context-aware", tasks_routes=routes, complex_cache=cache)
+    [task] = results["tasks"]
+    assert task["scores"] == pytest.approx([expected.loc[0, "score"]])
+    assert task["pvalues"] == pytest.approx([expected.loc[0, "pvalue"]])
+    assert info["warnings"] == []
+
+    base = "/api/models/toy-1/task_lists/ToyTasks/tasks/1/network"
+    scored = client.get(base, params={"run_id": info["run_id"], "sample": "log2FoldChange"}).json()
+    assert scored["has_data"] and scored["score"] == pytest.approx(expected.loc[0, "score"])
+
+
+def test_tide_warns_when_the_fold_change_column_has_no_negative_values(client):
+    all_positive = DE.replace("-1.5", "1.5").replace("-0.5", "0.5")
+    ds, started = _tide(client, all_positive)
+    assert started.status_code == 202
+    [warning] = started.json()["warnings"]
+    assert "no negative values" in warning and "expression" in warning
+    checked = client.post("/api/runs/check", json={
+        "model": "toy-1", "task_list": "ToyTasks", "dataset_id": ds, "method": "TIDE",
+        "params": {"lfc_col": "baseMean"}}).json()
+    assert checked["ok"] and "no negative values" in checked["warnings"][0]
+    # a proper fold-change column is clean
+    clean = client.post("/api/runs/check", json={
+        "model": "toy-1", "task_list": "ToyTasks", "dataset_id": _upload(client, DE), "method": "TIDE",
+        "params": {"lfc_col": "log2FoldChange"}}).json()
+    assert clean == {"ok": True, "errors": [], "warnings": []}
+
+
+def test_expression_methods_warn_about_negative_values_unless_absmax(client):
+    ds = _upload(client, DE)           # a DE table has negative values: not expression
+    for method in ("TAS", "CellFie"):
+        checked = client.post("/api/runs/check", json={
+            "model": "toy-1", "task_list": "ToyTasks", "dataset_id": ds, "method": method}).json()
+        assert checked["ok"] and "negative values" in checked["warnings"][0], method
+    signed = client.post("/api/runs/check", json={
+        "model": "toy-1", "task_list": "ToyTasks", "dataset_id": ds, "method": "TAS",
+        "params": {"or_func": "absmax"}}).json()
+    assert signed["warnings"] == []
+    assert client.post("/api/runs/check", json={
+        "model": "toy-1", "task_list": "ToyTasks", "dataset_id": _upload(client), "method": "TAS"}
+        ).json()["warnings"] == []
+
+
+def test_tide_input_errors_are_reported_before_running(client):
+    ds = _upload(client, DE)
+
+    def check(**params):
+        return client.post("/api/runs/check", json={
+            "model": "toy-1", "task_list": "ToyTasks", "dataset_id": ds, "method": "TIDE", "params": params}).json()
+
+    assert "not in the loaded table" in check(lfc_col="nope")["errors"][0]
+    assert "p-value" in check(lfc_col="log2FoldChange", mask_lfc_values=True)["errors"][0]
+    assert "outside [0, 1]" in check(lfc_col="log2FoldChange", pvalue_col="baseMean", mask_lfc_values=True)["errors"][0]
+    assert "same" in check(lfc_col="pvalue", pvalue_col="pvalue")["errors"][0]
+    assert "below" in check(lfc_col="log2FoldChange", pvalue_col="pvalue", mask_lfc_values=True, alpha=0.0001)["errors"][0]
+    flat = _upload(client, "geneID\tl\ng1\t0\ng2\t0\n")
+    r = client.post("/api/runs/check", json={"model": "toy-1", "task_list": "ToyTasks", "dataset_id": flat,
+                                             "method": "TIDE", "params": {"lfc_col": "l"}}).json()
+    assert not r["ok"] and "nothing to score" in r["errors"][0]
+    # starting a run with errors is refused with the same reason
+    _, started = _tide(client, params={"lfc_col": "nope"})
+    assert started.status_code == 400 and "not in the loaded table" in started.json()["detail"]
+
+
+def test_tide_masking_zeroes_nonsignificant_fold_changes(client):
+    ds, started = _tide(client, params={"pvalue_col": "pvalue", "mask_lfc_values": True, "alpha": 0.05})
+    info = _wait(client, started.json()["run_id"])
+    signal = client.server.RUNS.get(info["run_id"]).result["signal"]["log2FoldChange"]
+    assert signal.to_dict() == {"g1": 2.0, "g2": 0.0, "g3": 3.0, "g4": 0.0, "g_tr": 0.0}
+
+
+def test_tide_export_import_keeps_pvalues(client):
+    _, started = _tide(client)
+    run = _wait(client, started.json()["run_id"])
+    tsv = client.get(f"/api/runs/{run['run_id']}/export", params={"format": "tsv"}).text.strip().split("\n")
+    assert tsv[0].split("\t") == ["task_id", "description", "n_routes", "log2FoldChange", "log2FoldChange_pvalue"]
+    bundle = client.get(f"/api/runs/{run['run_id']}/export").json()
+    assert bundle["signal"]["kind"] == "log_fold_change" and "pvalues" in bundle["tasks"][0]
+    loaded = client.post("/api/runs/import", json=bundle).json()
+    assert loaded["dataset_id"] is None
+    again = client.get(f"/api/runs/{loaded['run_id']}/results").json()["tasks"]
+    assert again == client.get(f"/api/runs/{run['run_id']}/results").json()["tasks"]
+    bundle["tasks"][0]["pvalues"] = [0.1, 0.2, 0.3]
+    assert client.post("/api/runs/import", json=bundle).status_code == 400
+
+
+def test_a_tide_run_can_be_cancelled(client):
+    _, started = _tide(client, params={"n_permutations": 1000000})
+    run_id = started.json()["run_id"]
+    time.sleep(0.5)
+    assert client.delete(f"/api/runs/{run_id}").status_code == 200
+    assert _wait(client, run_id, timeout=60)["status"] == "cancelled"
