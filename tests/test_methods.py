@@ -110,3 +110,29 @@ def test_progress_is_reported_per_sample_and_can_cancel(toy_model, toy_inputs):
         raise RunCancelled()
     with pytest.raises(RunCancelled):
         score_tasks_report(routes, toy_model, expr, progress=stop)
+
+
+def test_tide_spec_matches_the_cli_defaults_and_choices():
+    args = mtea_parser().parse_args(["analyze", "TIDE", "x.tsv"])
+    for p in methods.TIDE.params:
+        if p.type == "column":
+            continue
+        assert getattr(args, p.dest or p.name) == p.default, p.name
+    parser_options = {a.dest: a for a in mtea_parser()._subparsers._group_actions[0].choices["analyze"]
+                      ._subparsers._group_actions[0].choices["TIDE"]._actions}
+    for p in methods.TIDE.params:
+        if p.choices:
+            assert set(parser_options[p.dest or p.name].choices) == set(p.choices), p.name
+
+
+def test_optional_and_column_params():
+    tide = methods.get_method("TIDE")
+    out = methods.validate_params(tide, {"lfc_col": "lfc", "pvalue_col": "", "random_seed": ""})
+    assert out["pvalue_col"] is None and out["random_seed"] is None and out["lfc_col"] == "lfc"
+    assert methods.validate_params(tide, {"random_seed": "7"})["random_seed"] == 7
+    with pytest.raises(ValueError, match="required"):
+        methods.validate_params(tide, {"lfc_col": ""})
+    with pytest.raises(ValueError, match="between|outside"):
+        methods.validate_params(tide, {"alpha": 2})
+    assert any(p["type"] == "column" and p["optional"] for p in
+               [p for m in methods.describe_methods() if m["id"] == "TIDE" for p in m["params"]])

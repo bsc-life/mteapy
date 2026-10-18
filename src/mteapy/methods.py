@@ -19,12 +19,13 @@ from dataclasses import dataclass
 class Param:
     name: str                       # also the CLI option (``--name``) and the JSON key
     label: str
-    type: str                       # "choice" | "float" | "int" | "bool"
+    type: str                       # "choice" | "float" | "int" | "bool" | "column"
     default: object
     help: str
     choices: tuple = ()
     min: float | None = None
     max: float | None = None
+    optional: bool = False          # may be left empty (None); a "column" parameter picks a column of the loaded data
     dest: str | None = None         # argparse dest when it differs from `name` (the CLI's historical attribute)
     when: tuple = ()                # ((param, value), ...): only relevant while all of these hold; the GUI hides it otherwise
 
@@ -35,6 +36,7 @@ class Method:
     label: str
     description: str
     params: tuple[Param, ...]
+    input_kind: str = "expression"  # "expression" (non-negative) | "log_fold_change" (signed)
 
 
 TAS = Method(
@@ -98,7 +100,46 @@ CELLFIE = Method(
     ),
 )
 
-METHODS: dict[str, Method] = {m.id: m for m in (TAS, CELLFIE)}
+TIDE = Method(
+    id="TIDE",
+    label="TIDE - Tasks Inferred from Differential Expression",
+    description=(
+        "TIDE (Doughty et al., 2020) scores each task from a differential-expression table: log-fold changes are "
+        "projected through the GPR rules (AND = min, OR = the chosen function) and averaged over a route's "
+        "reactions; the task's score is its best-supported route's (up- or down-regulated: the sign is kept). The "
+        "p-value is empirical, from permuting the fold changes across genes. Input is a log-fold-change table, "
+        "not expression: it has negative values."
+    ),
+    input_kind="log_fold_change",
+    params=(
+        Param("lfc_col", "Log-FC column", "column", None,
+              "Column of the loaded table holding the log fold changes of the comparison to score.",
+              dest="lfc_col"),
+        Param("pvalue_col", "p-value column", "column", None,
+              "Column holding the significance of each fold change (p-value or adjusted p-value). Only used to "
+              "mask non-significant fold changes.", optional=True, dest="pvalue_col"),
+        Param("mask_lfc_values", "Mask non-significant", "bool", False,
+              "Set the fold change of every gene whose p-value is not below alpha to 0 before scoring. Needs a "
+              "p-value column.", dest="filter_lfc"),
+        Param("alpha", "Alpha", "float", 0.05, "Significance threshold used by the mask.", min=0, max=1,
+              when=(("mask_lfc_values", True),)),
+        Param("or_func", "OR function", "choice", "absmax",
+              "How OR relationships in gene-protein-reaction rules are resolved: absmax returns the value of "
+              "largest magnitude (right for signed fold changes), max the maximum.", choices=("absmax", "max")),
+        Param("n_permutations", "Permutations", "int", 1000,
+              "Number of permutations that build the null distribution; the resolution of the p-values is "
+              "1/permutations. Most of a run's time goes here.", min=1, max=1000000),
+        Param("permutation_strategy", "Permutation strategy", "choice", "argmax",
+              "argmax re-runs the best-of-routes search for every permutation, exactly like the real score "
+              "(rigorous). fixed-route scores only each task's real winning route under every permutation "
+              "(faster, slightly less conservative).", choices=("argmax", "fixed-route")),
+        Param("n_cpus", "CPUs", "int", 1, "Processes used for the permutations.", min=1),
+        Param("random_seed", "Random seed", "int", None,
+              "Seed for reproducible p-values; left empty, each run draws its own.", optional=True),
+    ),
+)
+
+METHODS: dict[str, Method] = {m.id: m for m in (TAS, CELLFIE, TIDE)}
 
 
 def get_method(method_id: str) -> Method:
@@ -114,12 +155,21 @@ def describe_methods() -> list[dict]:
         {"id": m.id, "label": m.label, "description": m.description,
          "params": [{"name": p.name, "label": p.label, "type": p.type, "default": p.default, "help": p.help,
                      "choices": list(p.choices), "min": p.min, "max": p.max,
-                     "when": [list(c) for c in p.when]} for p in m.params]}
+                     "optional": p.optional, "when": [list(c) for c in p.when]} for p in m.params],
+         "input_kind": m.input_kind}
         for m in METHODS.values()
     ]
 
 
 def _coerce(param: Param, value):
+    if value is None or (isinstance(value, str) and value == "" and param.type != "choice"):
+        if param.optional:
+            return None
+        raise ValueError(f"{param.name}: a value is required")
+    if param.type == "column":
+        if not isinstance(value, str):
+            raise ValueError(f"{param.name}: expected a column name, got {value!r}")
+        return value
     if param.type == "choice":
         if value not in param.choices:
             raise ValueError(f"{param.name}: {value!r} is not one of {list(param.choices)}")
@@ -154,7 +204,9 @@ def add_arguments(parser, method: Method, group=None) -> None:
     target = group or parser
     for p in method.params:
         kwargs = {"dest": p.dest or p.name, "default": p.default, "help": p.help}
-        if p.type == "choice":
+        if p.type == "column":
+            kwargs.update(type=str)
+        elif p.type == "choice":
             kwargs.update(type=str, choices=list(p.choices))
         elif p.type == "bool":
             kwargs.update(action="store_true")

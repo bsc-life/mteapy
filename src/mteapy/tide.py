@@ -351,7 +351,8 @@ def calculate_random_TIDE_scores_context_aware(
         or_func:str,
         n_permutations:int = 1000,
         n_cpus:int = 1,
-        random_seed:int = None
+        random_seed:int = None,
+        progress = None,
     ):
     """
     Context-aware analogue of `calculate_random_TIDE_scores`: computes Nº
@@ -359,7 +360,9 @@ def calculate_random_TIDE_scores_context_aware(
     to infer significancy, using `mteapy.context_scoring.score_task`
     instead of a fixed reaction set. See `calculate_TIDE_scores_context_aware`
     for `tasks_routes`/`complex_cache`; other parameters mirror
-    `calculate_random_TIDE_scores`.
+    `calculate_random_TIDE_scores`. `progress(done, total)`, if given, is
+    called after every finished permutation (in the parent process, also when
+    `n_cpus > 1`); an exception it raises stops the run.
 
     Returns
     -------
@@ -382,6 +385,8 @@ def calculate_random_TIDE_scores_context_aware(
             random_scores[i, :] = calculate_TIDE_scores_context_aware(
                 random_gene_dict, tasks_routes, complex_cache, or_func
             )
+            if progress is not None:
+                progress(i + 1, n_permutations)
     else:
         if random_seed is not None:
             seeds = [random_seed + i for i in range(n_permutations)]
@@ -397,8 +402,12 @@ def calculate_random_TIDE_scores_context_aware(
             "tasks_routes": tasks_routes, "complex_cache": complex_cache, "or_func": or_func,
         }
         with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
-            map_result = pool.map_async(MTEA_parallel_worker, seeds, chunksize=parallel_chunksize(n_permutations, n_cpus))
-            random_scores = np.array(list(map_result.get()))
+            rows = []
+            for row in pool.imap(MTEA_parallel_worker, seeds, chunksize=parallel_chunksize(n_permutations, n_cpus)):
+                rows.append(row)
+                if progress is not None:
+                    progress(len(rows), n_permutations)
+            random_scores = np.array(rows)
 
     return pd.DataFrame(random_scores, columns=task_ids)
 
@@ -417,6 +426,7 @@ def compute_TIDE(
         tasks_routes:dict = None,
         complex_cache:dict = None,
         permutation_strategy:str = "argmax",
+        progress = None,
     ):
     """
     Wrapper function to compute the TIDE framework.
@@ -486,6 +496,10 @@ def compute_TIDE(
         never re-earns "best of K" under permutation -- a real trade-off,
         not a free lunch, which is why it's opt-in rather than the default.
 
+    progress: callable
+        Optional ``progress(done, total)`` called after each permutation of the context-aware
+        null distribution (it may raise to cancel); ignored by the classic mapping.
+
     Returns
     -------
     TIDE_results: pandas.DataFrame
@@ -523,7 +537,7 @@ def compute_TIDE(
             permutation_routes = tasks_routes
 
         random_scores_df = calculate_random_TIDE_scores_context_aware(
-            gene_dict, permutation_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed
+            gene_dict, permutation_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed, progress
         )
     elif mapping_strategy == "classic":
         task_structure = task_structure.astype(bool)

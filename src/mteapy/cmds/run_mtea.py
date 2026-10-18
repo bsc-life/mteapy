@@ -12,8 +12,18 @@ from mteapy.utils import print_banner, mask_lfc_values, add_task_metadata, check
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
 from mteapy.context_scoring import build_complex_cache, compute_TAS
-from mteapy import registry, taskdb
+from mteapy import inputcheck, registry, taskdb
 from mteapy.cmds import enumerate_routes as enumerate_routes_cmd
+
+
+def _report_input_checks(errors, warnings):
+    """Print what `mteapy.inputcheck` found: warnings let the run go on, errors end it."""
+    for message in warnings:
+        print(f"{bc.WARNING}WARNING: {message}{bc.ENDC}\n")
+    if errors:
+        for message in errors:
+            print(f"{bc.FAIL}ERROR: {message}{bc.ENDC}\n")
+        exit(1)
 
 
 def _load_context_aware_inputs(args):
@@ -154,6 +164,8 @@ def main() -> None:
             if not check_ensemblid(expr_data_df[args.gene_col].values):
                 print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
                 exit(1)
+            # TIDE reads differential expression: a log-FC column with no negative values is probably expression
+            _report_input_checks(*inputcheck.check_lfc(expr_data_df[args.lfc_col], args.lfc_col))
 
             # Filtering LFC
             if args.filter_lfc:
@@ -255,6 +267,9 @@ def main() -> None:
             if not check_ensemblid(expr_data_df[args.gene_col].values):
                 print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
                 exit(1)
+            # Expression is non-negative: negative values look like log fold changes (a TIDE input)
+            _report_input_checks(*inputcheck.check_expression(
+                expr_data_df.drop(columns=[args.gene_col]).select_dtypes(include="number"), "CellFie"))
 
             if args.mapping_strategy == "context-aware":
                 model, tasks_routes, complex_cache = _load_context_aware_inputs(args)
@@ -351,6 +366,10 @@ def main() -> None:
             if not check_ensemblid(expr_data_df[args.gene_col].values):
                 print(f"{bc.FAIL}ERROR: one or more genes in the column {args.gene_col} are not EnsemblIDs.{bc.ENDC}\n")
                 exit(1)
+            # Expression is non-negative: negative values look like log fold changes (a TIDE input)
+            if args.or_func != "absmax":    # absmax is the signed-signal setting
+                _report_input_checks(*inputcheck.check_expression(
+                    expr_data_df.drop(columns=[args.gene_col]).select_dtypes(include="number"), "TAS"))
 
             if args.mapping_strategy == "context-aware":
                 model, tasks_routes, complex_cache = _load_context_aware_inputs(args)
