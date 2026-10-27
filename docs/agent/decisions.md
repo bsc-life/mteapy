@@ -4,6 +4,48 @@ Newest first. Each entry is here because the reasoning isn't obvious
 from the diff alone -- if you're about to "simplify" or "fix" one of
 these, read the entry first.
 
+## Missing genes: one rule for every method, `exclude` by default (2026-10-27)
+
+"Missing" means a gene the data has no value for (no row, or NaN) -- not a gene
+measured at 0. Every method takes `missing_genes` (`exclude` default | `zero`):
+`exclude` is classic CellFie's rule: a complex with an unknown subunit is
+unknown, OR ignores unknown alternatives, and a reaction with no known complex
+is left out of the task aggregate (new evidence class `NO_DATA`, like `NO_GPR`:
+not counted against completeness). `zero` is the old context-aware/TIDE
+behaviour (absent gene = 0; classic CellFie gets GAL 0 for absent GPR genes).
+It applies to the observed score and to every permutation (shuffling keeps
+absent genes absent), to TIDE-essential (unknown essential genes are skipped),
+and to the network view (unknown genes/complexes are `null`, drawn dashed).
+Why default `exclude`: absence from the data is not evidence of inactivity, and
+it is what the original CellFie does. Front ends report coverage with
+`inputcheck.check_gene_coverage`: any missing gene is a warning, 10% or more of
+the genes the routes need is an `ALERT:` (shown large in the GUI, boxed in the
+CLI), 50% or more says most of the model cannot be scored. The webapp keeps a
+NaN fold change missing (was: 0) unless `zero` is chosen. Impact on GTEx
+medians (TAS, min; few genes are absent there): Full all-zero tasks 11 -> 1,
+CellFie list 4 -> 0.
+
+## Reactions without a GPR are left out of a route's aggregate (2026-10-27)
+
+`score_task` used to give a no-GPR reaction (transporter, spontaneous) a score
+of 0.0 and aggregate it with the rest, so one such reaction pinned every
+"min" at 0 and dragged every "mean". 221 of 236 Human-GEM-Full tasks had one
+in every route and scored 0 in every GTEx tissue under TAS. They are now
+excluded from the aggregate (still reported, `NO_GPR`, and still not counted
+against completeness); a route of only such reactions scores 0. Classic
+CellFie already did this (its docstring); the *context-aware* CellFie path did
+not, because it goes through `score_task`, so this change affects it, TAS and
+context-aware TIDE alike. Classic TIDE (`calculate_TIDE_scores` and its
+permutations) was changed the same way afterwards, so no method counts a
+no-GPR reaction as a 0 any more (TIDE-essential has no reactions). Measured impact on GTEx medians (min): Full all-zero
+tasks 221 -> 11, zero cells 94% -> 89%; CellFie list 93 -> 4 tasks, 52% -> 27%.
+What remains in Full is mostly two oxidative-phosphorylation reactions
+(MAR06914 complex IV, MAR06916 ATP synthase) whose GPRs AND in tissue-restricted
+paralogs (COX7B2, ATP5MGL) -- a Human-GEM GPR issue, not changed here: dropping
+them as well takes Full to 33% zero cells / 64% complete. Earlier outputs of
+TAS/CellFie-context-aware (e.g. in metabolic-variability) predate this and
+need regenerating.
+
 ## Model folders + manifest registry; method specs; GUI runs
 
 Nothing model-specific is hard-coded any more. A model is a folder with a

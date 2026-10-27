@@ -44,6 +44,15 @@ unilaterally; ask first.
   `architecture.md`/`webapp/README.md`.
 - `mteapy.methods`: one declarative spec per method shared by CLI and GUI.
 
+## Scoring semantics changed (uncommitted until noted otherwise)
+
+No method counts a no-GPR reaction as 0 any more, and `missing_genes`
+("exclude" default | "zero") sets how genes absent from the data are read --
+see the last two entries of `decisions.md`. Scores of TAS, context-aware
+CellFie/TIDE and classic TIDE changed; outputs made before (e.g. in
+`metabolic-variability`) must be regenerated, and results files saved earlier
+no longer load (the routes fingerprint changed with the rehash).
+
 ## Pending -- do these next
 
 - **Task 31 (fructose degradation)**: MN5 job 47042151 hit the 6000 s cap with
