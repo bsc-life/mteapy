@@ -311,7 +311,8 @@ def _scoring_signal(method_id: str, params: dict, data: pd.DataFrame):
             global_value=params["global_value"], log_transformed=params["log_transformed"],
         )
         # A gene that is zero everywhere has threshold 0 -> 0/0; it simply has no activity.
-        return gal.fillna(0.0), aggregation, or_func
+        # (A gene the data has no value for stays missing, which is a different thing.)
+        return gal.fillna(0.0).where(data.notna()), aggregation, or_func
     return data, aggregation, or_func
 
 
@@ -332,17 +333,19 @@ def _execute_run(run, ctx: ModelContext, data: pd.DataFrame):
         # The real scores are one cheap pass; the permutations are the run.
         params = cfg["params"]
         frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
-                                    complex_cache=complex_cache)
+                                    complex_cache=complex_cache, missing_genes=params["missing_genes"])
         run.unit, run.done, run.total = "permutations", 0, params["n_permutations"]
         found = compute_TIDE(
             signal, params["lfc_col"], None, ctx.model, or_func, params["n_permutations"], params["n_cpus"],
             False, params["random_seed"], mapping_strategy="context-aware", tasks_routes=routes,
             complex_cache=complex_cache, permutation_strategy=params["permutation_strategy"], progress=progress,
+            missing_genes=params["missing_genes"],
         )
         pvalues = dict(zip(found["task_id"], (float(p) for p in found["pvalue"])))
     else:
         frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
-                                    progress=progress, complex_cache=complex_cache)
+                                    progress=progress, complex_cache=complex_cache,
+                                    missing_genes=cfg["params"]["missing_genes"])
     samples = list(signal.columns)
     tasks = []
     for task_id in frames["scores"].index:
@@ -419,9 +422,13 @@ def _prepare_run(body: dict):
                     if not (lfc_values.fillna(0) != 0).any():
                         errors.append(f"no gene has {pcol} below {params['alpha']:g}: every fold change is masked to 0")
         n_missing = int(lfc_values.isna().sum())
-        if n_missing:
-            warnings.append(f"{n_missing} gene(s) have no value in '{lfc}'; they are treated as 0 (no change)")
-        data = pd.DataFrame({lfc: lfc_values.fillna(0.0).astype(float)})
+        if params["missing_genes"] == "zero":
+            if n_missing:
+                warnings.append(f"{n_missing} gene(s) have no value in '{lfc}'; they are treated as 0 (no change)")
+            lfc_values = lfc_values.fillna(0.0)
+        elif n_missing:
+            warnings.append(f"{n_missing} gene(s) have no value in '{lfc}'; they count as missing genes")
+        data = pd.DataFrame({lfc: lfc_values.astype(float)})
         params["n_cpus"] = max(1, min(params["n_cpus"], os.cpu_count() or 1))
     else:
         # absmax is the signed-signal setting, so negative values are what the user asked for there.
@@ -431,11 +438,17 @@ def _prepare_run(body: dict):
             warnings += w
 
     model_genes = {g.id for g in ctx.model.genes}
-    matched = len(model_genes & set(data.index))
+    present = set(data.index[data.notna().any(axis=1)])
+    matched = len(model_genes & present)
     if matched == 0:
         errors.append(f"None of the dataset's {len(data)} genes is a gene of this model "
                       f"(the model uses {ctx.entry.gene_id_type or 'its own'} gene ids, e.g. "
                       f"{sorted(model_genes)[:3]}); check the id column")
+    if matched:
+        needed = set(_relevant_genes(ctx, body["task_list"], pd.DataFrame(index=sorted(model_genes))))
+        e, w = inputcheck.check_gene_coverage(present, needed, params["missing_genes"])
+        errors += e
+        warnings += w
     if errors:
         raise HTTPException(400, "; ".join(errors))
     return method, params, ctx, data, matched, warnings
@@ -562,7 +575,7 @@ async def api_export_run(run_id: str, format: str = "json"):
         "samples": result["samples"],
         "tasks": result["tasks"],
         "signal": {"kind": _signal_kind(cfg["method"]), "genes": genes, "samples": result["samples"],
-                   "values": [[float(f"{x:.6g}") for x in row] for row in sub.to_numpy()]},
+                   "values": [[None if x != x else float(f"{x:.6g}") for x in row] for row in sub.to_numpy()]},
     }
     return Response(json.dumps(bundle, allow_nan=False), media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{stem}.json"'})
@@ -659,7 +672,7 @@ async def api_network(model: str, task_list: str, task_id: str, run_id: str | No
     if (run_id is None) != (sample is None):
         raise HTTPException(400, "run_id and sample must be given together, or both omitted")
 
-    aggregation, or_func = "min", "max"
+    aggregation, or_func, missing_genes = "min", "max", "zero"    # topology view: no signal, nothing is "missing"
     if run_id is not None:
         run = _get_run(run_id)
         if run.status != "done":
@@ -673,6 +686,7 @@ async def api_network(model: str, task_list: str, task_id: str, run_id: str | No
             raise HTTPException(400, f"Unknown sample {sample!r}; available: {list(df.columns)}")
         gene_dict = df[sample].to_dict()
         aggregation, or_func = run.result["aggregation"], run.result["or_func"]
+        missing_genes = cfg["params"]["missing_genes"]
     else:
         gene_dict = {}
 
@@ -683,7 +697,8 @@ async def api_network(model: str, task_list: str, task_id: str, run_id: str | No
     if not routes:
         raise HTTPException(404, f"No enumerated routes for task {task_id!r} (task list {task_list!r})")
     complex_cache = get_complex_cache(ctx, task_list, task_id, routes)
-    report = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func)
+    report = score_task(routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func,
+                        missing_genes=missing_genes)
     input_ids, output_ids = get_boundary_ids(ctx, task_list, task_id)
 
     shown_route_ids = report.winning_route_ids
@@ -696,7 +711,8 @@ async def api_network(model: str, task_list: str, task_id: str, run_id: str | No
     for route_id in shown_route_ids:
         reactions = routes[route_id]
         graph = build_route_graph(ctx.model, set(reactions), gene_dict, get_flux(ctx, route_id),
-                                   ctx.met_bigg, ctx.rxn_bigg, input_ids, output_ids, or_func=or_func)
+                                   ctx.met_bigg, ctx.rxn_bigg, input_ids, output_ids, or_func=or_func,
+                                   missing_genes=missing_genes)
         panels.append({"route_id": route_id, **graph})
 
     return {

@@ -56,6 +56,8 @@
   .run-warnings { margin: -0.4rem 0 0.8rem; font-size: 0.8rem; }
   .run-warnings div { border-radius: 8px; padding: 0.45rem 0.8rem; margin-bottom: 0.35rem; }
   .run-warnings .warn { background: #fbe9c9; border: 1px solid #e3b25d; color: #5a3b00; }
+  .run-warnings .alert { background: #fbd9d9; border: 2px solid #c0392b; color: #5c0f0f; font-size: 1rem; padding: 0.8rem 1rem; }
+  .run-warnings .alert strong { display: block; font-size: 1.15rem; margin-bottom: 0.2rem; }
   .run-warnings .err { background: #fde0e0; border: 1px solid #e08f8f; color: #6b1212; }
   #legend-down { display: none; }
   .legend-signed #legend-down { display: inline-flex; }
@@ -154,7 +156,7 @@
     <span style="color:var(--muted)">low&rarr;high</span>
     <span id="legend-down"><span class="swatch" style="background:#8e44ad"></span> down-regulated (negative score; same scale)</span>
     <span><span class="swatch" style="background:var(--evidence-none)"></span> has GPR, no evidence</span>
-    <span><span class="swatch" style="background:var(--score-empty);border:1px solid var(--hairline);"></span> no GPR</span>
+    <span><span class="swatch" style="background:var(--score-empty);border:1px solid var(--hairline);"></span> no GPR, or no data for its genes</span>
     <span><span class="swatch" style="background:var(--surface);border:1.6px solid var(--met-node);border-radius:50%;"></span> internal met.</span>
     <span><span class="swatch" style="background:var(--met-input);border-radius:50%;"></span> task input</span>
     <span><span class="swatch" style="background:var(--met-output);border-radius:50%;"></span> task output</span>

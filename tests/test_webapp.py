@@ -72,7 +72,7 @@ def test_models_and_methods_are_listed(client):
     described = {m["id"]: m for m in client.get("/api/methods").json()["methods"]}
     assert list(described) == ["TAS", "CellFie", "TIDE"]
     assert described["TIDE"]["input_kind"] == "log_fold_change" and described["TAS"]["input_kind"] == "expression"
-    assert {p["name"] for p in described["TAS"]["params"]} == {"aggregation", "or_func"}
+    assert {p["name"] for p in described["TAS"]["params"]} == {"aggregation", "or_func", "missing_genes"}
     upper = next(p for p in described["CellFie"]["params"] if p["name"] == "global_value")
     assert upper["when"] == [["threshold_type", "global"]]
 
@@ -102,7 +102,7 @@ def test_parameters_change_the_result_and_are_recorded(client):
     ds = _upload(client, "geneID\ts1\ng1\t10\ng2\t2\ng3\t4\ng4\t1\ng_tr\t1\n")
     r_min = _wait(client, _run(client, ds).json()["run_id"])
     r_mean = _wait(client, _run(client, ds, params={"aggregation": "mean"}).json()["run_id"])
-    assert r_mean["config"]["params"] == {"aggregation": "mean", "or_func": "max"}
+    assert r_mean["config"]["params"] == {"aggregation": "mean", "or_func": "max", "missing_genes": "exclude"}
     scores = lambda info: client.get(f"/api/runs/{info['run_id']}/results").json()["tasks"][0]["scores"]
     assert scores(r_min) == [4.0]
     assert scores(r_mean) == [6.0]
@@ -407,3 +407,27 @@ def test_a_tide_run_can_be_cancelled(client):
     time.sleep(0.5)
     assert client.delete(f"/api/runs/{run_id}").status_code == 200
     assert _wait(client, run_id, timeout=60)["status"] == "cancelled"
+
+
+def test_missing_genes_are_excluded_by_default_and_warned_about(client):
+    # g2 is not in the data. exclude: R2 is unknown, route R1+R2 is scored on R1 alone (10) and beats R3 (4);
+    # zero: R2 counts as 0, route R1+R2 scores 0 and R3 wins.
+    ds = _upload(client, "geneID\ts1\ng1\t10\ng3\t4\ng4\t1\ng_tr\t1\n")
+    checked = client.post("/api/runs/check", json={"model": "toy-1", "task_list": "ToyTasks", "dataset_id": ds,
+                                                   "method": "TAS", "params": {}}).json()
+    assert any(w.startswith("ALERT: ") and "missing from the data" in w for w in checked["warnings"])
+
+    excluded = _wait(client, _run(client, ds).json()["run_id"])
+    zero = _wait(client, _run(client, ds, params={"missing_genes": "zero"}).json()["run_id"])
+    scores = lambda info: client.get(f"/api/runs/{info['run_id']}/results").json()["tasks"][0]["scores"]
+    assert scores(excluded) == [10.0] and scores(zero) == [4.0]
+    assert excluded["config"]["params"]["missing_genes"] == "exclude"
+    assert any("missing from the data" in w for w in excluded["warnings"])
+
+    # the network view is scored the way the run was
+    base = "/api/models/toy-1/task_lists/ToyTasks/tasks/1/network"
+    shown = client.get(base, params={"run_id": excluded["run_id"], "sample": "s1"}).json()
+    assert shown["score"] == 10.0
+    [panel] = shown["panels"]
+    r2 = next(n for n in panel["nodes"] if n.get("reaction_id") == "R2")
+    assert r2["evidence"] == "no_data" and r2["gene_values"] == {"g2": None} and r2["complex_scores"] == [None]

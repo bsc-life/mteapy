@@ -62,6 +62,13 @@ the database.
   genes without a value. *Errors* keep Run disabled: a column that is not in the
   table, masking without a p-value column, a p-value column outside [0, 1], a
   constant column, no gene matching the model. The CLI prints the same warnings.
+- **Missing genes**: every method has a *Missing genes* parameter. `exclude`
+  (default, as in the original CellFie) treats a gene the data has no value for
+  as unknown: a complex with an unknown subunit is unknown and a reaction with
+  no known complex is left out of the task score (the network shows it as "no
+  data", its genes dashed). `zero` counts them as 0. The check reports how many
+  of the genes the task routes need are missing: a warning for any, and a large
+  red box when 10% or more are (the CLI prints a boxed alert).
 - **Save / Load results**: *Save results* downloads a self-contained JSON file
   (scores, method + parameters, model key and sha256, a fingerprint of the
   task list's routes, and the scoring signal restricted to the genes the routes

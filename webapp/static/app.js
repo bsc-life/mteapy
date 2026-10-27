@@ -282,7 +282,16 @@ let checkTimer = null, checkSeq = 0;
 function showChecks(errors, warnings) {
   warnBox.innerHTML = "";
   errors.forEach(t => { const d = document.createElement("div"); d.className = "err"; d.textContent = t; warnBox.appendChild(d); });
-  warnings.forEach(t => { const d = document.createElement("div"); d.className = "warn"; d.textContent = `Warning: ${t}`; warnBox.appendChild(d); });
+  // An "ALERT: " warning (a lot of genes missing from the data) is shown big, before the others.
+  const ALERT = "ALERT: ";
+  const alerts = warnings.filter(t => t.startsWith(ALERT)), plain = warnings.filter(t => !t.startsWith(ALERT));
+  alerts.forEach(t => {
+    const d = document.createElement("div"); d.className = "alert";
+    const h = document.createElement("strong"); h.textContent = "Many genes are missing from your data";
+    d.append(h, document.createTextNode(t.slice(ALERT.length)));
+    warnBox.prepend(d);
+  });
+  plain.forEach(t => { const d = document.createElement("div"); d.className = "warn"; d.textContent = `Warning: ${t}`; warnBox.appendChild(d); });
   warnBox.hidden = errors.length + warnings.length === 0;
   checkBlocked = errors.length > 0;
   updateRunButton();
@@ -578,7 +587,7 @@ function nodeFillColor(d, colorScale) {
       : getComputedColor("--surface");
   }
   if (d.evidence === "no_evidence") return getComputedColor("--evidence-none");
-  if (d.evidence === "no_gpr") return getComputedColor("--score-empty");
+  if (d.evidence === "no_gpr" || d.evidence === "no_data") return getComputedColor("--score-empty");
   return colorScale(d.score || 0);
 }
 
@@ -784,6 +793,7 @@ const EVIDENCE_LABEL = {
   ambiguous: ["Ambiguous", "#c98500", "#fbe9c9"],
   no_evidence: ["No evidence", "var(--evidence-none)", "var(--evidence-none-bg)"],
   no_gpr: ["No GPR", "#898781", "#e1e0d9"],
+  no_data: ["No data for its genes", "#898781", "#e1e0d9"],
 };
 const IO_LABEL = {
   input: ["Task input", "var(--met-input)", "var(--met-input-bg)"],
@@ -863,7 +873,7 @@ function drawBipartite(complexes, complexScores, geneValues, winningComplexes) {
   const winningSet = new Set(winningComplexes.map(c => JSON.stringify([...c].sort())));
   const isWinning = c => winningSet.has(JSON.stringify([...c].sort()));
 
-  const maxVal = Math.max(1e-6, ...genes.map(g => geneValues[g] || 0));
+  const maxVal = Math.max(1e-6, ...genes.map(g => geneValues[g] || 0));   // null (no data) counts as 0 for the colour scale
   const geneScale = d3.scaleSequential().domain([0, Math.log1p(maxVal)])
     .interpolator(t => d3.interpolate(getComputedColor("--score-empty"), "#0ca30c")(t));
 
@@ -890,17 +900,20 @@ function drawBipartite(complexes, complexScores, geneValues, winningComplexes) {
     svg.append("circle").attr("cx", complexX).attr("cy", complexY[ci]).attr("r", 7)
       .style("fill", "var(--complex-node)")
       .attr("stroke", isWinning(c) ? "#0ca30c" : "none").attr("stroke-width", 2.5);
-    const scoreText = complexScores[ci] !== undefined ? ` — ${complexScores[ci].toFixed(2)}` : "";
+    const unknown = complexScores[ci] === null;      // a subunit has no value in the data
+    const scoreText = unknown ? " — no data" : complexScores[ci] !== undefined ? ` — ${complexScores[ci].toFixed(2)}` : "";
     svg.append("text").attr("x", complexX - 14).attr("y", complexY[ci] + 3).attr("text-anchor", "end")
       .attr("font-size", 10).style("fill", "var(--ink)").text(`Complex ${ci + 1}${scoreText}${isWinning(c) ? " ✓" : ""}`);
   });
 
   genes.forEach((g, gi) => {
+    const noData = geneValues[g] === null;
     const val = geneValues[g] || 0;
     svg.append("circle").attr("cx", geneX).attr("cy", geneY[gi]).attr("r", 6)
-      .style("fill", geneScale(Math.log1p(val)));
+      .style("fill", noData ? "var(--surface)" : geneScale(Math.log1p(val)))
+      .attr("stroke", noData ? "var(--muted)" : "none").attr("stroke-dasharray", noData ? "2 2" : null);
     svg.append("text").attr("x", geneX + 12).attr("y", geneY[gi] + 3)
-      .attr("font-size", 9).style("fill", "var(--ink)").text(`${g} (${val.toFixed(1)})`);
+      .attr("font-size", 9).style("fill", "var(--ink)").text(`${g} (${noData ? "no data" : val.toFixed(1)})`);
   });
 }
 
