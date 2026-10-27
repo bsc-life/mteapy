@@ -172,6 +172,8 @@ def mtea_parser():
 
     TIDE_parser.add_argument("--n_cpus", action="store", type=int, dest="n_cpus", default=1,help="Number of CPUs for parallel execution.")
 
+    TIDE_parser.add_argument("--missing_genes", action="store", type=str, dest="missing_genes", choices=list(methods.MISSING_GENES_PARAM.choices), default=methods.MISSING_GENES_PARAM.default, help=methods.MISSING_GENES_PARAM.help)
+
     TIDE_parser.add_argument("--mask_lfc_values", action="store_true", dest="filter_lfc", help="Flag to indicate whether to mask log-FC values to 0 according to their significance. That is, if a log-FC value is non-significant (determined by the user), they will be masked to 0.")
 
     TIDE_parser.add_argument("--random_scores", action="store_true", dest="random_scores_flag", help="Flag to indicate whether to return the null distribution of random scores used to inferr significance with the results file.")

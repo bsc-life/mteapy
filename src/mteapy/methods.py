@@ -39,6 +39,14 @@ class Method:
     input_kind: str = "expression"  # "expression" (non-negative) | "log_fold_change" (signed)
 
 
+MISSING_GENES_PARAM = Param(
+    "missing_genes", "Missing genes", "choice", "exclude",
+    "How a gene the data has no value for (not in the table, or empty) is read. exclude: it is unknown, as in "
+    "the original CellFie -- a complex with an unknown subunit is unknown, and a reaction none of whose "
+    "complexes is known is left out of the task score. zero: it counts as 0, as if measured and silent.",
+    choices=("exclude", "zero"))
+
+
 TAS = Method(
     id="TAS",
     label="TAS - Task Activity Score",
@@ -57,6 +65,7 @@ TAS = Method(
               "How OR relationships in gene-protein-reaction rules are resolved: max returns the maximum value "
               "(non-negative expression), absmax the absolute maximum (signed signals such as log-fold-changes).",
               choices=("max", "absmax")),
+        MISSING_GENES_PARAM,
     ),
 )
 
@@ -97,6 +106,7 @@ CELLFIE = Method(
         Param("log_transformed", "Input is log-transformed", "bool", False,
               "Tick when the expression is already log-transformed: percentile thresholds are then taken directly "
               "on the given values instead of in log10 space (the original algorithm assumes raw, linear TPM/FPKM)."),
+        MISSING_GENES_PARAM,
     ),
 )
 
@@ -136,6 +146,7 @@ TIDE = Method(
         Param("n_cpus", "CPUs", "int", 1, "Processes used for the permutations.", min=1),
         Param("random_seed", "Random seed", "int", None,
               "Seed for reproducible p-values; left empty, each run draws its own.", optional=True),
+        MISSING_GENES_PARAM,
     ),
 )
 

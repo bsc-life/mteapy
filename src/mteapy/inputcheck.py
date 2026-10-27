@@ -69,3 +69,36 @@ def check_expression(frame: pd.DataFrame, method: str = "this method") -> tuple[
         f"{len(negative)} column(s) ({shown}) have negative values (min {low:g}). Expression is non-negative, so "
         f"this looks like log fold changes (a TIDE input) and {method} will not give meaningful scores on it."
     ]
+
+
+# A warning that starts with this marker is one the front ends must make hard to miss
+# (large, coloured); the marker is stripped before showing it.
+ALERT_PREFIX = "ALERT: "
+ALERT_FRACTION = 0.10       # this share of the genes the routes need missing from the data raises an alert
+
+
+def check_gene_coverage(present, needed, missing_genes: str = "exclude") -> tuple[list[str], list[str]]:
+    """How many of the genes the scoring needs (those in the GPRs of the task routes) the data has.
+
+    The data lacking a gene is not the same as measuring it at 0: with ``missing_genes="exclude"``
+    the reactions that depend on it are left out of the task scores, so a low coverage makes the
+    scores rest on fewer reactions. Up to `ALERT_FRACTION` missing is a plain warning; more than that
+    (or none of them present) is an alert, marked with `ALERT_PREFIX`.
+    """
+    needed = set(needed)
+    if not needed:
+        return [], []
+    missing = len(needed - set(present))
+    if not missing:
+        return [], []
+    fraction = missing / len(needed)
+    effect = ("the reactions that depend on them are left out of the task scores"
+              if missing_genes == "exclude" else "they are counted as 0")
+    message = f"{missing} of the {len(needed)} genes the task routes need ({fraction:.0%}) are missing from the data; {effect}."
+    if fraction < ALERT_FRACTION:
+        return [], [message]
+    if fraction >= 0.5:
+        message += " Most of the model's metabolism cannot be scored with this data: check that the gene ids match the model's."
+    else:
+        message += " Check the gene ids, and read the scores with that in mind."
+    return [], [ALERT_PREFIX + message]

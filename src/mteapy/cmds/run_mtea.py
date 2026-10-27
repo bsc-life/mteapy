@@ -19,11 +19,26 @@ from mteapy.cmds import enumerate_routes as enumerate_routes_cmd
 def _report_input_checks(errors, warnings):
     """Print what `mteapy.inputcheck` found: warnings let the run go on, errors end it."""
     for message in warnings:
-        print(f"{bc.WARNING}WARNING: {message}{bc.ENDC}\n")
+        if message.startswith(inputcheck.ALERT_PREFIX):
+            text = message[len(inputcheck.ALERT_PREFIX):]
+            bar = "!" * 78
+            print(f"{bc.FAIL}{bc.BOLD}{bar}\n!! WARNING -- MANY GENES MISSING FROM THE DATA\n!! {text}\n{bar}{bc.ENDC}\n")
+        else:
+            print(f"{bc.WARNING}WARNING: {message}{bc.ENDC}\n")
     if errors:
         for message in errors:
             print(f"{bc.FAIL}ERROR: {message}{bc.ENDC}\n")
         exit(1)
+
+
+def _check_gene_coverage(model, tasks_routes, present_genes, missing_genes, task_structure=None):
+    """Warn (loudly when it is a lot) about the genes the scored reactions need that the data lacks."""
+    if tasks_routes is not None:
+        reactions = {r for routes in tasks_routes.values() for rs in routes.values() for r in rs}
+    else:
+        reactions = set(task_structure.index)
+    needed = {g.id for rid in reactions if rid in model.reactions for g in model.reactions.get_by_id(rid).genes}
+    _report_input_checks(*inputcheck.check_gene_coverage(present_genes, needed, missing_genes))
 
 
 def _load_context_aware_inputs(args):
@@ -185,6 +200,7 @@ def main() -> None:
             print(f"\tNº jobs      = {args.n_cpus}")
             print(f"\tPermutations = {args.n_permutations}")
             print(f"\tOR function  = {args.or_func}")
+            print(f"\tMissing genes = {args.missing_genes}")
 
             if args.random_seed is not None:
                 print(f"\tRandom seed  = {args.random_seed}")
@@ -200,6 +216,8 @@ def main() -> None:
                                              sep="\t", index_col=0)
                 tasks_routes = complex_cache = None
 
+            _check_gene_coverage(model, tasks_routes, set(expr_data_df[args.gene_col].dropna()),
+                                 args.missing_genes, task_structure)
             TIDE_results = compute_TIDE(
                 expr_data_df.set_index(args.gene_col),
                 args.lfc_col,
@@ -214,6 +232,7 @@ def main() -> None:
                 tasks_routes=tasks_routes,
                 complex_cache=complex_cache,
                 permutation_strategy=args.permutation_strategy,
+                missing_genes=args.missing_genes,
             )
             TIDE_e_results = compute_TIDEe(
                 expr_data_df.set_index(args.gene_col),
@@ -222,7 +241,8 @@ def main() -> None:
                 args.n_permutations,
                 args.n_cpus,
                 args.random_scores_flag,
-                args.random_seed
+                args.random_seed,
+                missing_genes=args.missing_genes,
             )
             print("Saving results", end = " ")
             TIDE_results.rename(columns={"score": "TIDE_score", "pvalue": "TIDE_pvalue"}, inplace=True)
@@ -307,6 +327,9 @@ def main() -> None:
                     print(f"\tUpper bound           = {args.upper_bound}")
                     print(f"\tLower bound           = {args.lower_bound}")
 
+            print(f"\tMissing genes         = {args.missing_genes}")
+            _check_gene_coverage(model, tasks_routes, set(expr_data_df.index), args.missing_genes, task_structure)
+
             # Main execution
             metabolic_scores_df, binary_scores_df = compute_CellFie(
                 expr_data_df,
@@ -320,6 +343,7 @@ def main() -> None:
                 log_transformed=args.log_transformed,
                 mapping_strategy=args.mapping_strategy,
                 tasks_routes=tasks_routes,
+                missing_genes=args.missing_genes,
             )
 
             # Adding metadata
@@ -398,6 +422,8 @@ def main() -> None:
             print(f"\tNº samples detected   = {len(expr_data_df.columns)}")
             print(f"\tAggregation           = {args.aggregation}")
             print(f"\tOR function           = {args.or_func}")
+            print(f"\tMissing genes         = {args.missing_genes}")
+            _check_gene_coverage(model, tasks_routes, set(expr_data_df.index), args.missing_genes, task_structure)
 
             # Main execution
             scores_df, complete_df = compute_TAS(
@@ -408,6 +434,7 @@ def main() -> None:
                 or_func=args.or_func,
                 mapping_strategy=args.mapping_strategy,
                 tasks_routes=tasks_routes,
+                missing_genes=args.missing_genes,
             )
 
             # Adding metadata

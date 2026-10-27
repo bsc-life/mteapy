@@ -5,6 +5,7 @@ class bcolors:
     WARNING = '\033[93m'
     CYAN = '\033[0;36m'
     FAIL = '\033[91m'
+    BOLD = '\033[1m'
     ENDC = '\033[0m'
 
     def disable(self):
@@ -13,4 +14,5 @@ class bcolors:
         self.OKGREEN = ''
         self.WARNING = ''
         self.FAIL = ''
+        self.BOLD = ''
         self.ENDC = ''

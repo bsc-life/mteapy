@@ -39,3 +39,15 @@ def test_expression_with_negative_values_warns_and_names_the_columns():
     errors, warnings = inputcheck.check_expression(frame, "CellFie")
     assert errors == [] and "'b'" in warnings[0] and "CellFie" in warnings[0] and "'a'" not in warnings[0]
     assert inputcheck.check_expression(frame[["a", "c"]]) == ([], [])
+
+
+def test_gene_coverage_is_silent_when_complete_a_warning_when_small_an_alert_when_large():
+    needed = {f"g{i}" for i in range(100)}
+    assert inputcheck.check_gene_coverage(needed, needed) == ([], [])
+    _, small = inputcheck.check_gene_coverage(needed - {"g1", "g2"}, needed)
+    assert len(small) == 1 and not small[0].startswith(inputcheck.ALERT_PREFIX) and "2 of the 100" in small[0]
+    _, large = inputcheck.check_gene_coverage(set(list(needed)[:60]), needed)
+    assert large[0].startswith(inputcheck.ALERT_PREFIX) and "40%" in large[0]
+    _, most = inputcheck.check_gene_coverage(set(), needed)
+    assert most[0].startswith(inputcheck.ALERT_PREFIX) and "Most of the model" in most[0]
+    assert "counted as 0" in inputcheck.check_gene_coverage(set(), needed, "zero")[1][0]

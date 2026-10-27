@@ -12,14 +12,14 @@ def test_methods_are_json_serializable_and_complete():
     described = methods.describe_methods()
     json.dumps(described)
     [tas] = [m for m in described if m["id"] == "TAS"]
-    assert {p["name"] for p in tas["params"]} == {"aggregation", "or_func"}
+    assert {p["name"] for p in tas["params"]} == {"aggregation", "or_func", "missing_genes"}
     assert all(p["help"] and p["label"] for p in tas["params"])
 
 
 def test_validate_params_fills_defaults_and_rejects_bad_input():
     tas = methods.get_method("TAS")
-    assert methods.validate_params(tas, None) == {"aggregation": "min", "or_func": "max"}
-    assert methods.validate_params(tas, {"aggregation": "mean"}) == {"aggregation": "mean", "or_func": "max"}
+    assert methods.validate_params(tas, None) == {"aggregation": "min", "or_func": "max", "missing_genes": "exclude"}
+    assert methods.validate_params(tas, {"aggregation": "mean"}) == {"aggregation": "mean", "or_func": "max", "missing_genes": "exclude"}
     with pytest.raises(ValueError, match="aggregation"):
         methods.validate_params(tas, {"aggregation": "sum"})
     with pytest.raises(ValueError, match="unknown parameter"):
