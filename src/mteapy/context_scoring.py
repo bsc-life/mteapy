@@ -57,6 +57,7 @@ import pandas as pd
 from cobra.core import Model
 
 from mteapy.complexes import get_enzymes
+from mteapy.utils import check_missing_genes, known_value
 
 _SUPPORTED_AGGREGATIONS = ("min", "median", "mean")
 
@@ -81,12 +82,19 @@ class ReactionEvidence(Enum):
     The reaction's score is well-defined; which specific complex earned it
     is not."""
 
+    NO_DATA = "no_data"
+    """The reaction has candidate complexes, but each one has a subunit the data
+    has no value for (`missing_genes="exclude"`). Unknown, not zero: like
+    NO_GPR it is left out of the route's aggregate and does not count against
+    completeness."""
+
     SUPPORTED = "supported"
     """Exactly one candidate complex uniquely achieved the (non-zero) top
     score: the cleanest possible case."""
 
 
 _SUPPORTED_OR_FUNCS = ("max", "absmax")
+_NOT_EVALUATED = (ReactionEvidence.NO_GPR, ReactionEvidence.NO_DATA)   # left out of aggregates and of completeness
 
 
 def tied_argmax(scores: dict, rel_tol: float = 1e-9, abs_tol: float = 1e-9, or_func: str = "max") -> tuple:
@@ -154,10 +162,13 @@ class ReactionAssessment:
     though, numerically, "all tied at 0" would otherwise also satisfy
     tied_argmax, that is not reported here as a winning set."""
     evidence: ReactionEvidence = ReactionEvidence.NO_GPR
+    missing_complexes: tuple[Complex, ...] = ()
+    """Candidate complexes left unscored because a subunit has no value in the
+    data (`missing_genes="exclude"`); never listed in `complex_scores`."""
 
 
 def assess_reaction(reaction_id: str, complexes: tuple[Complex, ...], gene_dict: dict[str, float],
-                     or_func: str = "max") -> ReactionAssessment:
+                     or_func: str = "max", missing_genes: str = "exclude") -> ReactionAssessment:
     """Score one reaction's candidate complexes against `gene_dict` and classify the result.
 
     AND (a complex's own genes) is always `min` of the raw values,
@@ -167,21 +178,39 @@ def assess_reaction(reaction_id: str, complexes: tuple[Complex, ...], gene_dict:
     only affects OR, i.e. which candidate complex counts as "the" winner
     among a reaction's alternatives: "max" (default) for expression-like
     signals, "absmax" for a signal that can be negative.
+
+    `missing_genes` ("exclude", default, or "zero"; see `mteapy.utils.MISSING_GENES`)
+    says how a gene the data has no value for is read: unknown, which makes its
+    complex unknown (and the reaction NO_DATA when no complex is known), or 0.
     """
     if or_func not in _SUPPORTED_OR_FUNCS:
         raise ValueError(f"Unsupported or_func {or_func!r}; use one of {_SUPPORTED_OR_FUNCS}")
+    check_missing_genes(missing_genes)
     if not complexes:
         return ReactionAssessment(reaction_id, 0.0, {}, (), ReactionEvidence.NO_GPR)
 
-    complex_scores = {c: min(gene_dict.get(g, 0.0) for g in c) for c in complexes}
+    unknown: tuple = ()
+    if missing_genes == "zero":
+        complex_scores = {c: min(gene_dict.get(g, 0.0) for g in c) for c in complexes}
+    else:
+        complex_scores, unknown_list = {}, []
+        for c in complexes:
+            values = [known_value(gene_dict, g) for g in c]
+            if any(v is None for v in values):
+                unknown_list.append(c)
+            else:
+                complex_scores[c] = min(values)
+        unknown = tuple(unknown_list)
+        if not complex_scores:
+            return ReactionAssessment(reaction_id, 0.0, {}, (), ReactionEvidence.NO_DATA, unknown)
     score = max(complex_scores.values(), key=abs) if or_func == "absmax" else max(complex_scores.values())
 
     if score == 0.0:
-        return ReactionAssessment(reaction_id, 0.0, complex_scores, (), ReactionEvidence.NO_EVIDENCE)
+        return ReactionAssessment(reaction_id, 0.0, complex_scores, (), ReactionEvidence.NO_EVIDENCE, unknown)
 
     winners = tied_argmax(complex_scores, or_func=or_func)
     evidence = ReactionEvidence.SUPPORTED if len(winners) == 1 else ReactionEvidence.AMBIGUOUS
-    return ReactionAssessment(reaction_id, score, complex_scores, winners, evidence)
+    return ReactionAssessment(reaction_id, score, complex_scores, winners, evidence, unknown)
 
 
 def _aggregate(values: list[float], aggregation: str) -> float:
@@ -208,8 +237,9 @@ class RouteReport:
     @property
     def is_complete(self) -> bool:
         """True if every gene-associated reaction along this route is
-        cleanly SUPPORTED. NO_GPR reactions don't count against
-        completeness -- there is nothing to evaluate for them, so their
+        cleanly SUPPORTED. NO_GPR and NO_DATA reactions don't count against
+        completeness -- there is nothing to evaluate for them (NO_DATA is
+        reported through the data's gene coverage instead), so their
         presence is not a gap in the evidence. AMBIGUOUS and NO_EVIDENCE
         reactions do count against it: they are real gaps in what this
         route's score can be said to be backed by.
@@ -217,7 +247,7 @@ class RouteReport:
         return all(
             r.evidence == ReactionEvidence.SUPPORTED
             for r in self.reactions.values()
-            if r.evidence != ReactionEvidence.NO_GPR
+            if r.evidence not in _NOT_EVALUATED
         )
 
     @property
@@ -272,6 +302,7 @@ def score_task(
     task_id: str = "",
     or_func: str = "max",
     reaction_cache: dict[str, "ReactionAssessment"] | None = None,
+    missing_genes: str = "exclude",
 ) -> TaskActivityReport:
     """Score every candidate route of one task against one sample's expression.
 
@@ -290,8 +321,14 @@ def score_task(
         One sample's signal, `{gene_id: value}` -- non-negative expression
         (CellFie-style; use `or_func="max"`) or signed log-fold-change
         (TIDE-style; use `or_func="absmax"`).
+    missing_genes:
+        "exclude" (default) or "zero": how a gene the data has no value for is
+        read -- see `assess_reaction`.
     aggregation:
-        How a route's reaction scores combine into one route score: "min"
+        How a route's reaction scores combine into one route score (reactions
+        without any gene association are left out of it, so a transporter or
+        spontaneous reaction neither zeroes a "min" nor lowers a "mean"; a
+        route made only of such reactions scores 0): "min"
         (default, strict weakest-link -- this project's own route-tie
         analysis validated this over "median" for the CellFie-style
         expression case, `or_func="max"`), "median" (permissive), or "mean"
@@ -325,6 +362,7 @@ def score_task(
     if aggregation not in _SUPPORTED_AGGREGATIONS:
         raise ValueError(f"Unsupported aggregation {aggregation!r}; use one of {_SUPPORTED_AGGREGATIONS}")
 
+    check_missing_genes(missing_genes)
     cache = reaction_cache if reaction_cache is not None else {}
 
     route_reports: dict[int, RouteReport] = {}
@@ -332,9 +370,15 @@ def score_task(
         assessments = {}
         for rid in reactions:
             if rid not in cache:
-                cache[rid] = assess_reaction(rid, complex_cache.get(rid, ()), gene_dict, or_func=or_func)
+                cache[rid] = assess_reaction(rid, complex_cache.get(rid, ()), gene_dict, or_func=or_func,
+                                          missing_genes=missing_genes)
             assessments[rid] = cache[rid]
-        agg_score = _aggregate([a.score for a in assessments.values()], aggregation)
+        # A reaction with no gene association, or none of whose genes the data covers,
+        # has nothing to evaluate: leave it out of the aggregate (as classic CellFie
+        # leaves out reactions without data) rather than count it as a 0 that would
+        # pin every "min" and drag every "mean".
+        evaluable = [a.score for a in assessments.values() if a.evidence not in _NOT_EVALUATED]
+        agg_score = _aggregate(evaluable, aggregation)
         route_reports[route_id] = RouteReport(route_id, agg_score, aggregation, assessments)
 
     winning_route_ids = tied_argmax({rid: r.score for rid, r in route_reports.items()}, or_func=or_func)
@@ -360,6 +404,7 @@ def score_tasks_report(
     or_func: str = "max",
     progress=None,
     complex_cache: dict | None = None,
+    missing_genes: str = "exclude",
 ) -> dict[str, pd.DataFrame]:
     """Score every task in `tasks_routes` against every sample (column) in `expr_df`.
 
@@ -423,7 +468,7 @@ def score_tasks_report(
         for task_id, routes in tasks_routes.items():
             report = score_task(
                 routes, complex_cache, gene_dict, aggregation=aggregation, task_id=task_id, or_func=or_func,
-                reaction_cache=reaction_cache,
+                reaction_cache=reaction_cache, missing_genes=missing_genes,
             )
             cells["scores"][task_id][sample] = report.score
             cells["complete"][task_id][sample] = report.is_complete
@@ -445,12 +490,14 @@ def score_tasks_matrix(
     expr_df: pd.DataFrame,
     aggregation: str = "min",
     or_func: str = "max",
+    missing_genes: str = "exclude",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """`(scores, complete)` of `score_tasks_report` -- the two tasks x samples
     DataFrames a CellFie/TIDE score matrix has, so a caller working
     matrix-first still sees which scores rest on ambiguous or absent
     evidence rather than that information being silently dropped."""
-    report = score_tasks_report(tasks_routes, model, expr_df, aggregation=aggregation, or_func=or_func)
+    report = score_tasks_report(tasks_routes, model, expr_df, aggregation=aggregation, or_func=or_func,
+                                missing_genes=missing_genes)
     return report["scores"], report["complete"]
 
 
@@ -462,6 +509,7 @@ def compute_TAS(
         or_func: str = "max",
         mapping_strategy: str = "classic",
         tasks_routes: dict | None = None,
+        missing_genes: str = "exclude",
     ):
     """Task Activity Score (TAS): project expression straight through each
     task's GPR (AND = min, OR = `or_func`) and aggregate across its
@@ -514,6 +562,10 @@ def compute_TAS(
         `{task_id: {route_id: reaction_id_set}}`. Required when
         mapping_strategy="context-aware"; ignored otherwise.
 
+    missing_genes: str ["exclude" | "zero"]
+        How a gene the data has no value for is read (default "exclude":
+        unknown, as in the original CellFie; "zero": counts as 0).
+
     Returns
     -------
     scores_df: pandas.DataFrame
@@ -541,7 +593,8 @@ def compute_TAS(
     else:
         raise ValueError(f"Unsupported mapping_strategy {mapping_strategy!r}. Please, use 'classic' or 'context-aware'.")
 
-    scores_df, complete_df = score_tasks_matrix(tasks_routes, model, expr_data, aggregation=aggregation, or_func=or_func)
+    scores_df, complete_df = score_tasks_matrix(tasks_routes, model, expr_data, aggregation=aggregation, or_func=or_func,
+                                                missing_genes=missing_genes)
     scores_df.index.name = "task_id"
     complete_df.index.name = "task_id"
     return scores_df, complete_df

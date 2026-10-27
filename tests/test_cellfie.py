@@ -104,3 +104,14 @@ def test_compute_CellFie_context_aware_requires_tasks_routes(toy_model):
     expr_data = pd.DataFrame({"S1": [1.0, 1.0, 3.0]}, index=["g1", "g2", "g3"])
     with pytest.raises(ValueError):
         compute_CellFie(expr_data, None, toy_model, mapping_strategy="context-aware")
+
+
+def test_calculate_RAL_missing_genes_exclude_or_zero():
+    from cobra.core.gene import GPR
+    from mteapy.cellfie import calculate_RAL
+    gal = pd.DataFrame({"s1": [3.0]}, index=["G1"])
+    gprs = {"R1": GPR.from_string("G1"), "R2": GPR.from_string("G_absent")}
+    excluded = calculate_RAL(gal, gprs)
+    assert excluded.loc["R1", "s1"] == 3.0 and np.isnan(excluded.loc["R2", "s1"])      # unknown: not scored
+    zero = calculate_RAL(gal, gprs, missing_genes="zero")
+    assert zero.loc["R2", "s1"] == 0.0                                                   # measured and silent

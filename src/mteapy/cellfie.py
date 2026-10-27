@@ -5,7 +5,7 @@ from cobra.core.gene import GPR
 from cobra.core import Model
 
 from mteapy.context_scoring import score_tasks_matrix
-from mteapy.utils import map_gpr_w_names
+from mteapy.utils import check_missing_genes, map_gpr_w_names
 
 
 ###########################################
@@ -125,7 +125,7 @@ def calculate_GAL(
     return pd.DataFrame(gene_scores, index=expr_data.index, columns=expr_data.columns)
 
 
-def calculate_RAL(gal_df:pd.DataFrame, gpr_dict:dict):
+def calculate_RAL(gal_df:pd.DataFrame, gpr_dict:dict, missing_genes:str = "exclude"):
     """
     Function to calculate Reaction Activity Levels (RALs) from a Gene Activity Level matrix (GALs) using the CellFie framework.
 
@@ -136,6 +136,10 @@ def calculate_RAL(gal_df:pd.DataFrame, gpr_dict:dict):
 
     gpr_dict: dict
         A dictionary of reactions to their GPR rules. GPR rules must be cobra.core.gene.GPR or ast.Name or ast.BoolOp objects.
+
+    missing_genes: str ["exclude" | "zero"]
+        "exclude" (default, the original CellFie's rule): a gene the data has no value for is
+        unknown. "zero": it gets a GAL of 0, as if it were measured and silent.
 
     Returns
     -------
@@ -151,6 +155,12 @@ def calculate_RAL(gal_df:pd.DataFrame, gpr_dict:dict):
     -----
     RALs are computed as indicated in the CellFie paper.
     """
+    check_missing_genes(missing_genes)
+    if missing_genes == "zero":
+        needed = {g.id if hasattr(g, "id") else g for gpr in gpr_dict.values() for g in getattr(gpr, "genes", ())}
+        absent = sorted(needed - set(gal_df.index))
+        if absent:
+            gal_df = pd.concat([gal_df, pd.DataFrame(0.0, index=absent, columns=gal_df.columns)])
     all_reactions = list(gpr_dict.keys())
     all_genes = gal_df.index
 
@@ -243,7 +253,8 @@ def calculate_CellFie_scores(ral_df:pd.DataFrame, task_structure:pd.DataFrame):
 # Context-aware mapping strategy
 ###########################################
 
-def calculate_CellFie_scores_context_aware(gal_df:pd.DataFrame, tasks_routes:dict, model:Model):
+def calculate_CellFie_scores_context_aware(gal_df:pd.DataFrame, tasks_routes:dict, model:Model,
+                                           missing_genes:str = "exclude"):
     """
     Context-aware analogue of `calculate_CellFie_scores`: instead of a
     single fixed per-task reaction set, scores every enumerated alternate
@@ -278,7 +289,8 @@ def calculate_CellFie_scores_context_aware(gal_df:pd.DataFrame, tasks_routes:dic
     binary_scores_df: pandas.DataFrame
         A pandas DataFrame containing the binary metabolic scores after applying a certain threshold of activity. Rows correspond to metabolic tasks and columns to samples.
     """
-    metabolic_scores_df, _ = score_tasks_matrix(tasks_routes, model, gal_df, aggregation="mean", or_func="max")
+    metabolic_scores_df, _ = score_tasks_matrix(tasks_routes, model, gal_df, aggregation="mean", or_func="max",
+                                                  missing_genes=missing_genes)
     metabolic_scores_df.index.name = "task_id"
     binary_scores_df = (metabolic_scores_df >= 5 * np.log(2)).astype(int)
 
@@ -297,6 +309,7 @@ def compute_CellFie(
         log_transformed:bool = False,
         mapping_strategy:str = "classic",
         tasks_routes:dict = None,
+        missing_genes:str = "exclude",
     ):
     """
     Wrapper function to compute the CellFie framework.
@@ -345,6 +358,10 @@ def compute_CellFie(
         `{task_id: {route_id: reaction_id_set}}`. Required when
         mapping_strategy="context-aware"; ignored otherwise.
 
+    missing_genes: str ["exclude" | "zero"]
+        How a gene the data has no value for is read (default "exclude": unknown, as in the
+        original CellFie; "zero": a GAL of 0).
+
     log_transformed: bool
         Passed through to `calculate_GAL` -- see its own docstring. Default
         False assumes `expr_data` is raw (linear) expression, matching what
@@ -368,15 +385,16 @@ def compute_CellFie(
         log_transformed,
     )
 
+    check_missing_genes(missing_genes)
     if mapping_strategy == "context-aware":
         if tasks_routes is None:
             raise ValueError("mapping_strategy='context-aware' requires tasks_routes.")
-        metabolic_scores_df, binary_scores_df = calculate_CellFie_scores_context_aware(gal_df, tasks_routes, model)
+        metabolic_scores_df, binary_scores_df = calculate_CellFie_scores_context_aware(gal_df, tasks_routes, model, missing_genes)
     elif mapping_strategy == "classic":
         task_structure = task_structure.astype(bool)
         # CellFie only uses reactions with valid GPR rules, internally they are considered as 0.0
         gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.gpr != GPR.from_string("")}
-        ral_df = calculate_RAL(gal_df, gpr_dict)
+        ral_df = calculate_RAL(gal_df, gpr_dict, missing_genes)
         metabolic_scores_df, binary_scores_df = calculate_CellFie_scores(ral_df, task_structure)
     else:
         raise ValueError(f"Unsupported mapping_strategy {mapping_strategy!r}. Please, use 'classic' or 'context-aware'.")

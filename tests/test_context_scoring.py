@@ -53,12 +53,42 @@ def test_assess_reaction_and_within_complex_or_across_complexes():
     assert result.complex_scores == {("A", "B"): 1.0, ("C",): 3.0}
 
 
-def test_assess_reaction_missing_gene_defaults_to_zero():
+def test_assess_reaction_missing_gene_is_zero_when_asked():
     complexes = (("A", "B"),)
-    result = assess_reaction("R1", complexes, {"A": 5.0})  # B absent -> AND floors to 0
+    result = assess_reaction("R1", complexes, {"A": 5.0}, missing_genes="zero")  # B absent -> AND floors to 0
     assert result.score == 0.0
     assert result.evidence == ReactionEvidence.NO_EVIDENCE
     assert result.winning_complexes == ()  # no complex counts as "winning" at zero evidence
+
+
+def test_assess_reaction_missing_gene_is_unknown_by_default():
+    # a complex with an unknown subunit is unknown (as in classic CellFie); OR ignores unknown alternatives
+    only_unknown = assess_reaction("R1", (("A", "B"),), {"A": 5.0})
+    assert only_unknown.evidence == ReactionEvidence.NO_DATA
+    assert only_unknown.complex_scores == {} and only_unknown.missing_complexes == (("A", "B"),)
+
+    partly = assess_reaction("R1", (("A", "B"), ("C",)), {"A": 5.0, "C": 2.0})
+    assert partly.score == 2.0 and partly.evidence == ReactionEvidence.SUPPORTED
+    assert partly.complex_scores == {("C",): 2.0} and partly.missing_complexes == (("A", "B"),)
+
+    # an explicit 0 is a measurement, a NaN is not
+    assert assess_reaction("R1", (("A",),), {"A": 0.0}).evidence == ReactionEvidence.NO_EVIDENCE
+    assert assess_reaction("R1", (("A",),), {"A": float("nan")}).evidence == ReactionEvidence.NO_DATA
+
+
+def test_assess_reaction_rejects_unknown_missing_genes():
+    with pytest.raises(ValueError, match="missing_genes"):
+        assess_reaction("R1", (("A",),), {}, missing_genes="drop")
+
+
+@pytest.mark.parametrize("missing_genes, expected", [("exclude", 3.0), ("zero", 0.0)])
+def test_score_task_leaves_reactions_without_data_out_only_when_excluding(missing_genes, expected):
+    complex_cache = {"R1": (("g1",),), "R2": (("g_absent",),)}
+    report = score_task({1: frozenset({"R1", "R2"})}, complex_cache, {"g1": 3.0}, missing_genes=missing_genes)
+    assert report.score == expected
+    assert report.routes[1].reactions["R2"].evidence == (
+        ReactionEvidence.NO_DATA if missing_genes == "exclude" else ReactionEvidence.NO_EVIDENCE)
+    assert report.is_complete == (missing_genes == "exclude")        # NO_DATA is not a gap, NO_EVIDENCE is
 
 
 def test_assess_reaction_no_gpr_is_its_own_category():
@@ -420,3 +450,19 @@ def test_and_linked_paralog_pair_correctly_flags_no_evidence():
     testis_result = assess_reaction("MAR06914", gpr_like_complexes, testis_sample)
     assert testis_result.score == 40.0  # min(40.0, 105.9, 90.0)
     assert testis_result.evidence == ReactionEvidence.SUPPORTED
+
+
+@pytest.mark.parametrize("aggregation, expected", [("min", 1.0), ("mean", 2.0), ("median", 2.0)])
+def test_score_task_leaves_no_gpr_reactions_out_of_the_aggregate(aggregation, expected):
+    # R_diff has no gene association (diffusion): it must not count as a 0
+    complex_cache = {"R1": (("g1",),), "R2": (("g2",),), "R_diff": ()}
+    report = score_task({1: frozenset({"R1", "R2", "R_diff"})}, complex_cache, {"g1": 3.0, "g2": 1.0},
+                        aggregation=aggregation)
+    assert report.score == expected
+    assert report.is_complete
+    assert report.routes[1].reactions["R_diff"].score == 0.0      # still reported, just not aggregated
+
+
+def test_score_task_route_of_only_no_gpr_reactions_scores_zero():
+    report = score_task({1: frozenset({"R_diff"})}, {"R_diff": ()}, {"g1": 3.0})
+    assert report.score == 0.0

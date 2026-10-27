@@ -38,6 +38,7 @@ from cobra_netgraph.bipartite import (
 from cobra_netgraph.gpr import get_enzymes
 
 from mteapy.context_scoring import assess_reaction
+from mteapy.utils import known_value
 from mteapy.task_model import (
     _EQU_ARROW_PATTERN, _EQU_TERM_SPLIT_PATTERN, _parse_equation_term, build_metabolite_lookup,
     build_task_model, is_pseudo_reaction, set_min_total_flux_objective,
@@ -135,7 +136,7 @@ def compute_route_fluxes_submodel(model: Model, task: MetabolicTask, reactions: 
 def build_route_graph(model: Model, reactions: set[str], gene_dict: dict[str, float], fluxes: dict[str, float],
                        met_bigg: dict[str, str] | None = None, rxn_bigg: dict[str, str] | None = None,
                        input_ids: set[str] | None = None, output_ids: set[str] | None = None,
-                       or_func: str = "max") -> dict:
+                       or_func: str = "max", missing_genes: str = "exclude") -> dict:
     """Directed bipartite metabolite-reaction graph for one route, scored
     against one sample's `gene_dict`.
 
@@ -153,6 +154,10 @@ def build_route_graph(model: Model, reactions: set[str], gene_dict: dict[str, fl
     without a BiGG annotation table, or a task with no declared boundary)
     and every node just gets a blank `bigg_id` / `io="internal"`.
 
+    `missing_genes` ("exclude" or "zero") is passed through to `assess_reaction`; with
+    "exclude" a gene the data has no value for is None in `gene_values`, and so is the
+    score of a complex that needs it.
+
     `or_func` is passed straight through to `assess_reaction`: "max"
     (default) for a non-negative signal like expression, "absmax" for one
     that can be negative like a log-fold-change. Getting this wrong doesn't
@@ -166,9 +171,14 @@ def build_route_graph(model: Model, reactions: set[str], gene_dict: dict[str, fl
 
     def reaction_decorator(r, model):
         complexes = get_enzymes(r.gene_reaction_rule)
-        assessment = assess_reaction(r.id, complexes, gene_dict, or_func=or_func)
-        gene_values = {g: gene_dict.get(g, 0.0) for c in complexes for g in c}
-        complex_scores = [assessment.complex_scores[c] for c in complexes]
+        assessment = assess_reaction(r.id, complexes, gene_dict, or_func=or_func, missing_genes=missing_genes)
+        # With missing_genes="exclude" a gene the data has no value for is None (and so is any
+        # complex score that depends on one): unknown, not zero.
+        if missing_genes == "zero":
+            gene_values = {g: gene_dict.get(g, 0.0) for c in complexes for g in c}
+        else:
+            gene_values = {g: known_value(gene_dict, g) for c in complexes for g in c}
+        complex_scores = [assessment.complex_scores.get(c) for c in complexes]
         return dict(
             complexes=[list(c) for c in complexes], complex_scores=complex_scores,
             gene_values=gene_values, score=assessment.score, evidence=assessment.evidence.value,

@@ -5,14 +5,17 @@ from multiprocessing import Pool
 from cobra.core import Model
 
 from mteapy.context_scoring import score_task
-from mteapy.utils import map_gpr, calculate_pvalue, MTEA_parallel_worker, init_MTEA_parallel_worker, parallel_chunksize
+from mteapy.utils import (
+    calculate_pvalue, check_missing_genes, init_MTEA_parallel_worker, mean_over_genes, MTEA_parallel_worker,
+    parallel_chunksize, project_gpr,
+)
 
 
 ###########################################
 # TIDE-essential functions
 ###########################################
 
-def calculate_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame):
+def calculate_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame, missing_genes:str = "exclude"):
     """
     Function to calculate the metabolic score from TIDE using only essential genes.
 
@@ -32,7 +35,8 @@ def calculate_TIDEe_scores(gene_dict:dict, gene_essentiality:pd.DataFrame):
     task_to_gene = {task: gene_essentiality.index[gene_essentiality[task]].to_list() \
                     for task in gene_essentiality.columns}
 
-    scores = [np.mean([gene_dict.get(gene, 0.0) for gene in task_to_gene[task]]) for task in task_to_gene]
+    check_missing_genes(missing_genes)
+    scores = [mean_over_genes(gene_dict, task_to_gene[task], missing_genes) for task in task_to_gene]
 
     return np.array(scores)
 
@@ -42,7 +46,8 @@ def calculate_random_TIDEe_scores(
         gene_essentiality:pd.DataFrame, 
         n_permutations:int = 1000,
         n_cpus:int = 1,
-        random_seed:int = None
+        random_seed:int = None,
+        missing_genes:str = "exclude"
     ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
@@ -66,6 +71,7 @@ def calculate_random_TIDEe_scores(
     random_scores_df: pandas.DataFrame
         A pandas DataFrame where rows are permutations and columns metabolic tasks. Each cell correspond to a random metabolic score for a specific permutation and task.
     """
+    check_missing_genes(missing_genes)
     genes = list(gene_dict.keys())
     lfc_vector = np.array(list(gene_dict.values()))
     task_to_gene = {task: gene_essentiality.index[gene_essentiality[task]].to_list() \
@@ -80,7 +86,7 @@ def calculate_random_TIDEe_scores(
         for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
-            random_scores[i,:] = [np.mean([random_gene_dict.get(gene, 0.0) for gene in task_to_gene[task]]) \
+            random_scores[i,:] = [mean_over_genes(random_gene_dict, task_to_gene[task], missing_genes)
                                   for task in task_to_gene]
             
     else:
@@ -93,7 +99,8 @@ def calculate_random_TIDEe_scores(
         # Shared read-only state, sent to each worker PROCESS once (via the
         # Pool initializer) rather than rebuilt into every permutation's own
         # argument tuple and re-pickled/sent over IPC n_permutations times.
-        state = {"framework": "TIDE-essential", "genes": genes, "lfc_vector": lfc_vector, "task_to_gene": task_to_gene}
+        state = {"framework": "TIDE-essential", "genes": genes, "lfc_vector": lfc_vector, "task_to_gene": task_to_gene,
+                 "missing_genes": missing_genes}
 
         with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
             map_result = pool.map_async(MTEA_parallel_worker, seeds, chunksize=parallel_chunksize(n_permutations, n_cpus))
@@ -109,7 +116,8 @@ def compute_TIDEe(
         n_permutations:int = 1000,
         n_cpus:int = 1,
         random_scores_flag:bool = False,
-        random_seed:int = None
+        random_seed:int = None,
+        missing_genes:str = "exclude"
     ):
     """
     Wrapper function to compute the TIDE-essential framework.
@@ -145,8 +153,9 @@ def compute_TIDEe(
     gene_dict = dict(zip(expr_data.index, expr_data[lfc_col]))
     gene_essentiality = gene_essentiality.astype(bool)
 
-    scores = calculate_TIDEe_scores(gene_dict, gene_essentiality)
-    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_cpus, random_seed)
+    scores = calculate_TIDEe_scores(gene_dict, gene_essentiality, missing_genes)
+    random_scores_df = calculate_random_TIDEe_scores(gene_dict, gene_essentiality, n_permutations, n_cpus, random_seed,
+                                                     missing_genes)
     pvalues =  [calculate_pvalue(scores[i], random_scores_df[task]) for i, task in enumerate(gene_essentiality.columns)]
     
     TIDE_e_results = pd.DataFrame({"task_id": gene_essentiality.columns,
@@ -166,11 +175,22 @@ def compute_TIDEe(
 # TIDE functions
 ###########################################
 
+def _evaluable_task_structure(task_structure: pd.DataFrame, gpr_dict: dict) -> pd.DataFrame:
+    """`task_structure` without the reactions that have no GPR (diffusion, spontaneous).
+
+    They have no gene to score, so they are left out of a task's mean instead of
+    counting as 0 (the same rule `score_task` applies to routes). A task left with
+    no reaction scores 0."""
+    has_gpr = [getattr(gpr_dict[rxn], "body", gpr_dict[rxn]) is not None for rxn in task_structure.index]
+    return task_structure.loc[has_gpr]
+
+
 def calculate_TIDE_scores(
         gene_dict:dict, 
         task_structure:pd.DataFrame, 
         gpr_dict:dict, 
-        or_func:str
+        or_func:str,
+        missing_genes:str = "exclude"
     ):
     """
     Function to calculate the metabolic score from TIDE.
@@ -194,10 +214,16 @@ def calculate_TIDE_scores(
     scores: numpy.ndarray
         An array of metabolic scores in the same order as the columns of the task structure object.
     """
-    rxn_projection = {rxn: map_gpr(gpr_dict[rxn], gene_dict, or_func) for rxn in task_structure.index}
+    check_missing_genes(missing_genes)
+    task_structure = _evaluable_task_structure(task_structure, gpr_dict)
+    rxn_projection = {rxn: project_gpr(gpr_dict[rxn], gene_dict, or_func, missing_genes) for rxn in task_structure.index}
     task_to_rxns = {task: task_structure.index[task_structure[task]].to_list() for task in task_structure.columns}
-    
-    scores = [np.mean([rxn_projection[rxn] for rxn in task_to_rxns[task]]) for task in task_to_rxns]
+
+    # A reaction the data cannot score (NaN: "exclude" and no known complex) is left out of the mean
+    scores = []
+    for task in task_to_rxns:
+        values = [v for v in (rxn_projection[rxn] for rxn in task_to_rxns[task]) if v == v]
+        scores.append(np.mean(values) if values else 0.0)
     
     return np.array(scores)
 
@@ -209,7 +235,8 @@ def calculate_random_TIDE_scores(
         or_func:str,
         n_permutations:int = 1000,
         n_cpus:int = 1,
-        random_seed:int = None
+        random_seed:int = None,
+        missing_genes:str = "exclude"
     ):
     """
     Function to compute Nº permutations * random metabolic scores to inferr significancy.
@@ -242,6 +269,8 @@ def calculate_random_TIDE_scores(
     random_scores_df: pandas.DataFrame
         A pandas DataFrame where rows are permutations and columns metabolic tasks. Each cell correspond to a random metabolic score for a specific permutation and task.
     """
+    check_missing_genes(missing_genes)
+    task_structure = _evaluable_task_structure(task_structure, gpr_dict)
     genes = list(gene_dict.keys())
     lfc_vector = np.array(list(gene_dict.values()))
 
@@ -255,7 +284,7 @@ def calculate_random_TIDE_scores(
         for i in range(n_permutations):
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
-            random_projection[i,:] = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) \
+            random_projection[i,:] = [project_gpr(gpr_dict[rxn], random_gene_dict, or_func, missing_genes)
                                       for rxn in task_structure.index]
 
     else:
@@ -273,6 +302,7 @@ def calculate_random_TIDE_scores(
         state = {
             "framework": "TIDE", "genes": genes, "lfc_vector": lfc_vector,
             "gpr_string_dict": gpr_string_dict, "reaction_ids": list(task_structure.index), "or_func": or_func,
+            "missing_genes": missing_genes,
         }
 
         with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
@@ -286,7 +316,8 @@ def calculate_random_TIDE_scores(
     random_scores = np.zeros((n_permutations, len(task_structure.columns)))
     for i, task in enumerate(task_structure.columns):
         rxns = [k for k in task_structure.index[task_structure[task]] if k in random_projection_df.index]
-        random_scores[:,i] = random_projection_df.loc[rxns].mean().values
+        # pandas skips the NaN (unknown) reactions in the mean
+        random_scores[:,i] = np.nan_to_num(random_projection_df.loc[rxns].mean().values, nan=0.0) if rxns else 0.0
 
     return pd.DataFrame(random_scores, columns=task_structure.columns)
 
@@ -295,7 +326,8 @@ def calculate_random_TIDE_scores(
 # Context-aware mapping strategy
 ###########################################
 
-def calculate_TIDE_scores_context_aware(gene_dict:dict, tasks_routes:dict, complex_cache:dict, or_func:str):
+def calculate_TIDE_scores_context_aware(gene_dict:dict, tasks_routes:dict, complex_cache:dict, or_func:str,
+                                        missing_genes:str = "exclude"):
     """
     Context-aware analogue of `calculate_TIDE_scores`: instead of a single
     fixed per-task reaction set, scores every enumerated alternate route of
@@ -337,7 +369,7 @@ def calculate_TIDE_scores_context_aware(gene_dict:dict, tasks_routes:dict, compl
     scores = [
         score_task(
             routes, complex_cache, gene_dict, aggregation="mean", task_id=task_id, or_func=or_func,
-            reaction_cache=reaction_cache,
+            reaction_cache=reaction_cache, missing_genes=missing_genes,
         ).score
         for task_id, routes in tasks_routes.items()
     ]
@@ -353,6 +385,7 @@ def calculate_random_TIDE_scores_context_aware(
         n_cpus:int = 1,
         random_seed:int = None,
         progress = None,
+        missing_genes:str = "exclude",
     ):
     """
     Context-aware analogue of `calculate_random_TIDE_scores`: computes Nº
@@ -383,7 +416,7 @@ def calculate_random_TIDE_scores_context_aware(
             np.random.shuffle(lfc_vector)
             random_gene_dict = dict(zip(genes, lfc_vector))
             random_scores[i, :] = calculate_TIDE_scores_context_aware(
-                random_gene_dict, tasks_routes, complex_cache, or_func
+                random_gene_dict, tasks_routes, complex_cache, or_func, missing_genes
             )
             if progress is not None:
                 progress(i + 1, n_permutations)
@@ -400,6 +433,7 @@ def calculate_random_TIDE_scores_context_aware(
         state = {
             "framework": "TIDE-context-aware", "genes": genes, "lfc_vector": lfc_vector,
             "tasks_routes": tasks_routes, "complex_cache": complex_cache, "or_func": or_func,
+            "missing_genes": missing_genes,
         }
         with Pool(processes=n_cpus, initializer=init_MTEA_parallel_worker, initargs=(state,)) as pool:
             rows = []
@@ -427,6 +461,7 @@ def compute_TIDE(
         complex_cache:dict = None,
         permutation_strategy:str = "argmax",
         progress = None,
+        missing_genes:str = "exclude",
     ):
     """
     Wrapper function to compute the TIDE framework.
@@ -496,6 +531,10 @@ def compute_TIDE(
         never re-earns "best of K" under permutation -- a real trade-off,
         not a free lunch, which is why it's opt-in rather than the default.
 
+    missing_genes: str ["exclude" | "zero"]
+        How a gene the data has no value for is read (default "exclude": unknown, as in the
+        original CellFie -- the reaction is left out of a task's mean; "zero": counts as 0).
+
     progress: callable
         Optional ``progress(done, total)`` called after each permutation of the context-aware
         null distribution (it may raise to cancel); ignored by the classic mapping.
@@ -506,6 +545,7 @@ def compute_TIDE(
         A pandas DataFrame where rows are metabolic tasks and columns correspond to their score from TIDE, their average random score calculated from the null distribution, and their p-value.
     """
     gene_dict = dict(zip(expr_data.index, expr_data[lfc_col]))
+    check_missing_genes(missing_genes)
 
     if mapping_strategy == "context-aware":
         if tasks_routes is None or complex_cache is None:
@@ -517,7 +557,7 @@ def compute_TIDE(
         reaction_cache: dict = {}
         reports = {
             task_id: score_task(routes, complex_cache, gene_dict, aggregation="mean", task_id=task_id, or_func=or_func,
-                                 reaction_cache=reaction_cache)
+                                 reaction_cache=reaction_cache, missing_genes=missing_genes)
             for task_id, routes in tasks_routes.items()
         }
         scores = np.array([reports[task_id].score for task_id in task_ids])
@@ -537,15 +577,16 @@ def compute_TIDE(
             permutation_routes = tasks_routes
 
         random_scores_df = calculate_random_TIDE_scores_context_aware(
-            gene_dict, permutation_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed, progress
+            gene_dict, permutation_routes, complex_cache, or_func, n_permutations, n_cpus, random_seed, progress,
+            missing_genes
         )
     elif mapping_strategy == "classic":
         task_structure = task_structure.astype(bool)
         gpr_dict = {rxn.id: rxn.gpr for rxn in model.reactions if rxn.id in task_structure.index}
         task_ids = list(task_structure.columns)
-        scores = calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, or_func)
+        scores = calculate_TIDE_scores(gene_dict, task_structure, gpr_dict, or_func, missing_genes)
         random_scores_df = calculate_random_TIDE_scores(
-            gene_dict, task_structure, gpr_dict, or_func, n_permutations, n_cpus, random_seed
+            gene_dict, task_structure, gpr_dict, or_func, n_permutations, n_cpus, random_seed, missing_genes
         )
     else:
         raise ValueError(f"Unsupported mapping_strategy {mapping_strategy!r}. Please, use 'classic' or 'context-aware'.")

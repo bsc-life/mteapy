@@ -138,6 +138,64 @@ def absmax(array:np.ndarray):
 
     
 
+MISSING_GENES = ("exclude", "zero")
+"""How a gene absent from the data (no row, or NaN) is read: "exclude" -- it is
+unknown, as in the original CellFie (a complex with an unknown subunit is
+unknown, a reaction with no known complex is left out of a task's aggregate);
+or "zero" -- it counts as a value of 0."""
+
+
+def check_missing_genes(missing_genes: str) -> str:
+    if missing_genes not in MISSING_GENES:
+        raise ValueError(f"Unsupported missing_genes {missing_genes!r}; use one of {MISSING_GENES}")
+    return missing_genes
+
+
+def known_value(gene_dict: dict, gene: str):
+    """A gene's value, or None when the data has none for it (absent or NaN)."""
+    value = gene_dict.get(gene)
+    return None if value is None or value != value else value
+
+
+def map_gpr_known(expr, gene_dict: dict, or_func: str = "absmax"):
+    """`map_gpr` for `missing_genes="exclude"`: None means unknown. AND is unknown
+    when any subunit is, OR ignores unknown alternatives (unknown only when all
+    are), as in the original CellFie."""
+    if isinstance(expr, (Expression, GPR)):
+        return map_gpr_known(expr.body, gene_dict, or_func)
+    if isinstance(expr, Name):
+        return known_value(gene_dict, re.sub(r"\.\d*", "", expr.id))
+    if isinstance(expr, BoolOp):
+        values = [map_gpr_known(i, gene_dict, or_func) for i in expr.values]
+        if isinstance(expr.op, And):
+            return None if any(v is None for v in values) else min(values)
+        known = [v for v in values if v is not None]
+        if not known:
+            return None
+        return absmax(known) if or_func == "absmax" else max(known)
+    if expr is None:
+        return None
+    raise TypeError("unsupported operation " + repr(expr))
+
+
+def project_gpr(expr, gene_dict: dict, or_func: str, missing_genes: str = "exclude") -> float:
+    """A reaction's value from its GPR under `missing_genes`; NaN when unknown
+    ("exclude" and no known complex)."""
+    if missing_genes == "zero":
+        return map_gpr(expr, gene_dict, or_func)
+    value = map_gpr_known(expr, gene_dict, or_func)
+    return float("nan") if value is None else value
+
+
+def mean_over_genes(gene_dict: dict, genes, missing_genes: str = "exclude") -> float:
+    """Mean value of `genes`; "exclude" skips the ones the data has no value for
+    (0.0 when none is known), "zero" counts them as 0."""
+    if missing_genes == "zero":
+        return float(np.mean([gene_dict.get(g, 0.0) for g in genes]))
+    known = [v for v in (known_value(gene_dict, g) for g in genes) if v is not None]
+    return float(np.mean(known)) if known else 0.0
+
+
 def map_gpr(expr:GPR, gene_dict:dict, or_func:str = "absmax"):
     """
     Recursive function to parse through gene-protein-reaction (GPR) rules.
@@ -326,14 +384,16 @@ def MTEA_parallel_worker(random_seed:int) -> list:
 
     if framework == "TIDE-essential":
         task_to_gene = state["task_to_gene"]
-        random_scores = [np.mean([random_gene_dict.get(gene, 0.0) for gene in task_to_gene[task]]) for task in task_to_gene]
+        random_scores = [mean_over_genes(random_gene_dict, task_to_gene[task], state["missing_genes"])
+                         for task in task_to_gene]
 
         return np.array(random_scores)
 
     elif framework == "TIDE":
         gpr_dict = state["gpr_dict"]
         or_func = state["or_func"]
-        random_scores = [map_gpr(gpr_dict[rxn], random_gene_dict, or_func) for rxn in state["reaction_ids"]]
+        random_scores = [project_gpr(gpr_dict[rxn], random_gene_dict, or_func, state["missing_genes"])
+                         for rxn in state["reaction_ids"]]
 
         return np.array(random_scores)
 
@@ -349,7 +409,7 @@ def MTEA_parallel_worker(random_seed:int) -> list:
         reaction_cache: dict = {}
         random_scores = [
             score_task(routes, complex_cache, random_gene_dict, aggregation="mean", task_id=task_id, or_func=or_func,
-                       reaction_cache=reaction_cache).score
+                       reaction_cache=reaction_cache, missing_genes=state["missing_genes"]).score
             for task_id, routes in tasks_routes.items()
         ]
 
