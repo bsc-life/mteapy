@@ -79,6 +79,18 @@ the database.
   window resizes. Keyboard: `c`, `a`, `l`, `t`, `d` (ignored while typing in a
   field). The choice is remembered in the browser.
 
+### Exporting what you see
+
+The **Export** menu above the network exports the route currently shown (the
+sample, scores and colours it has now): **SVG** (vector, whole route, styles
+inlined so it opens the same in Inkscape/Illustrator), **PNG** (3x), the graph
+data as **JSON**, and the **evidence of all its reactions** as a TSV with one
+row per reaction x candidate complex x gene (reaction score, complex score,
+whether the complex won, gene value; the score columns are empty when no
+sample is loaded). Clicking a reaction adds two buttons to its detail panel:
+the same evidence TSV for just that reaction, and its complex/gene diagram as
+SVG. All of it is built in the browser from the data already loaded.
+
 ## What's static vs. per-sample
 
 - **Static (per model + task list, computed once and cached for the

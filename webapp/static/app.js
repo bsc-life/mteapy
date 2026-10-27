@@ -632,6 +632,153 @@ function renderPanel(container, panel, viewWidth, viewHeight, hasData) {
   });
 }
 
+// ==========================================================================
+// Export: the network picture, its data, and the context-aware evidence
+// ==========================================================================
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function fileStem(...parts) {
+  return parts.filter(p => p !== null && p !== undefined && p !== "").join("_").replace(/[^A-Za-z0-9._-]+/g, "-");
+}
+
+const STYLE_PROPS = ["fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "stroke-dasharray", "opacity",
+  "font-family", "font-size", "font-weight", "font-style", "text-anchor", "dominant-baseline", "paint-order"];
+
+// A standalone copy of an <svg>: every style the page resolves for it (CSS variables
+// and theme included) written inline, the zoom/pan reset, and the viewBox set to
+// the drawing itself, so the file looks the same anywhere and shows all of it.
+function standaloneSvg(svgEl, { fit = true, background = null } = {}) {
+  const clone = svgEl.cloneNode(true);
+  const src = [svgEl, ...svgEl.querySelectorAll("*")];
+  const dst = [clone, ...clone.querySelectorAll("*")];
+  src.forEach((el, i) => {
+    const cs = getComputedStyle(el);
+    const css = STYLE_PROPS.map(p => `${p}:${cs.getPropertyValue(p)}`).join(";");
+    dst[i].setAttribute("style", css);
+    // the resolved values are in the style now; attributes holding var(--x) would mean nothing elsewhere
+    for (const a of ["fill", "stroke", "opacity"]) dst[i].removeAttribute(a);
+  });
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  let width, height;
+  if (fit) {
+    const g = clone.querySelector(":scope > g");
+    const live = svgEl.querySelector(":scope > g");
+    const box = live.getBBox();
+    g.removeAttribute("transform");
+    const pad = 20;
+    const vb = [box.x - pad, box.y - pad, box.width + 2 * pad, box.height + 2 * pad];
+    clone.setAttribute("viewBox", vb.join(" "));
+    [width, height] = [vb[2], vb[3]];
+  } else {
+    const vb = svgEl.viewBox.baseVal;
+    [width, height] = vb && vb.width ? [vb.width, vb.height] : [svgEl.clientWidth, svgEl.clientHeight];
+  }
+  clone.setAttribute("width", width);
+  clone.setAttribute("height", height);
+  if (background) {
+    const [x, y, w, h] = clone.getAttribute("viewBox").split(" ");
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    for (const [k, v] of Object.entries({ x, y, width: w, height: h, fill: background })) rect.setAttribute(k, v);
+    clone.insertBefore(rect, clone.firstChild);
+  }
+  return { text: new XMLSerializer().serializeToString(clone), width, height };
+}
+
+function svgToPng(svg, scale) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(svg.width * scale);
+      canvas.height = Math.round(svg.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error("PNG encoding failed")), "image/png");
+    };
+    img.onerror = () => reject(new Error("could not rasterise the SVG"));
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg.text);
+  });
+}
+
+function exportName(ext, ...extra) {
+  const panel = currentData.panels[currentIndex];
+  return `${fileStem(currentTaskList, "task" + currentData.task_id, "route" + panel.route_id,
+                     currentData.has_data ? currentData.tissue : null, ...extra)}.${ext}`;
+}
+
+const TSV_COLUMNS = ["task_list", "task_id", "route_id", "sample", "reaction_id", "reaction_name", "equation", "flux",
+  "evidence", "reaction_score", "complex", "complex_score", "complex_in_winning", "gene", "gene_value"];
+
+// One row per (reaction, candidate complex, gene): the evidence the score was built
+// from. Reactions without a gene association keep a single row with empty complex fields.
+function evidenceRows(reactionNodes) {
+  const panel = currentData.panels[currentIndex];
+  const hasData = currentData.has_data;
+  const rows = [];
+  for (const n of reactionNodes) {
+    const winning = new Set((n.winning_complexes || []).map(c => JSON.stringify([...c].sort())));
+    const base = [currentTaskList, currentData.task_id, panel.route_id, hasData ? currentData.tissue : "",
+      n.reaction_id, n.label, n.equation, n.flux, hasData ? n.evidence : "", hasData ? n.score : ""];
+    const complexes = n.complexes || [];
+    if (!complexes.length) { rows.push([...base, "", "", "", "", ""]); continue; }
+    complexes.forEach((c, ci) => c.forEach(g => rows.push([...base, ci + 1,
+      hasData ? (n.complex_scores || [])[ci] : "", hasData ? winning.has(JSON.stringify([...c].sort())) : "",
+      g, hasData ? (n.gene_values || {})[g] : ""])));
+  }
+  return rows;
+}
+
+function evidenceTsv(reactionNodes) {
+  const cell = v => String(v ?? "").replace(/[\t\r\n]+/g, " ");
+  return [TSV_COLUMNS, ...evidenceRows(reactionNodes)].map(r => r.map(cell).join("\t")).join("\n") + "\n";
+}
+
+async function exportNetwork(kind) {
+  if (!currentData || !currentData.panels.length) return;
+  const panel = currentData.panels[currentIndex];
+  const reactions = panel.nodes.filter(n => n.type === "reaction");
+  try {
+    if (kind === "json") {
+      downloadBlob(exportName("json"), new Blob([JSON.stringify({
+        model: currentData.model, task_list: currentData.task_list, task_id: currentData.task_id,
+        task_description: currentData.task_description, sample: currentData.has_data ? currentData.tissue : null,
+        route_id: panel.route_id, nodes: panel.nodes, edges: panel.edges }, null, 1)], { type: "application/json" }));
+    } else if (kind === "evidence") {
+      downloadBlob(exportName("evidence.tsv"), new Blob([evidenceTsv(reactions)], { type: "text/tab-separated-values" }));
+    } else {
+      const svg = standaloneSvg(host.querySelector("svg"), { background: kind === "png" ? getComputedColor("--surface") || "#fff" : null });
+      if (kind === "svg") downloadBlob(exportName("svg"), new Blob([svg.text], { type: "image/svg+xml" }));
+      else downloadBlob(exportName("png"), await svgToPng(svg, 3));
+    }
+  } catch (err) {
+    setStatus(`Export failed: ${err.message}`);
+  }
+}
+
+const exportMenu = document.getElementById("export-menu");
+exportMenu.querySelectorAll("button[data-export]").forEach(b => b.addEventListener("click", () => {
+  exportMenu.open = false;
+  exportNetwork(b.dataset.export);
+}));
+document.addEventListener("click", ev => { if (!exportMenu.contains(ev.target)) exportMenu.open = false; });
+
+function exportReaction(d, kind) {
+  const base = fileStem(currentTaskList, "task" + currentData.task_id, d.reaction_id,
+                        currentData.has_data ? currentData.tissue : null);
+  if (kind === "tsv") {
+    downloadBlob(`${base}.evidence.tsv`, new Blob([evidenceTsv([d])], { type: "text/tab-separated-values" }));
+  } else {
+    const svg = standaloneSvg(document.getElementById("bipartite-svg"), { fit: false, background: getComputedColor("--surface") || "#fff" });
+    downloadBlob(`${base}.complexes.svg`, new Blob([svg.text], { type: "image/svg+xml" }));
+  }
+}
+
 const EVIDENCE_LABEL = {
   supported: ["Supported", "#0ca30c", "#d2f0e3"],
   ambiguous: ["Ambiguous", "#c98500", "#fbe9c9"],
@@ -691,9 +838,16 @@ function renderReactionDetail(d) {
     <div style="margin-bottom:0.6rem;"><code>${d.equation}</code></div>
     <div style="color:var(--muted);font-size:0.78rem;margin-bottom:0.4rem;">flux (this route) ${d.flux.toFixed(3)} mmol/gDW/h</div>
     ${evidenceRow}
+    <div class="detail-actions">
+      <button id="export-rxn-tsv" title="Evidence of this reaction: complexes, genes, values and scores">Export evidence (TSV)</button>
+      ${(d.complexes||[]).length ? '<button id="export-rxn-svg" title="The complex/gene diagram below">Export diagram (SVG)</button>' : ""}
+    </div>
     <div class="field-label">${(d.complexes||[]).length} candidate complex${(d.complexes||[]).length===1?'':'es'} (OR alternatives; genes within one AND-required)</div>
     <div id="bipartite-wrap"><svg id="bipartite-svg"></svg></div>
   `;
+  document.getElementById("export-rxn-tsv").addEventListener("click", () => exportReaction(d, "tsv"));
+  const svgBtn = document.getElementById("export-rxn-svg");
+  if (svgBtn) svgBtn.addEventListener("click", () => exportReaction(d, "svg"));
   drawBipartite(d.complexes || [], hasData ? (d.complex_scores || []) : [], hasData ? (d.gene_values || {}) : {}, hasData ? (d.winning_complexes || []) : []);
 }
 
@@ -783,6 +937,7 @@ function showPanel(index) {
     ? `Task ${currentData.task_id} — Route ${panel.route_id} ${countLabel} — ${nRxns} reactions`
     : `Task ${currentData.task_id} — Route ${panel.route_id} — ${nRxns} reactions`;
   renderPanel(host, panel, host.clientWidth || 1000, availableNetworkHeight(), currentData.has_data);
+  exportMenu.setAttribute("aria-disabled", "false");
   prevBtn.style.visibility = currentData.panels.length > 1 ? "visible" : "hidden";
   nextBtn.style.visibility = currentData.panels.length > 1 ? "visible" : "hidden";
 }

@@ -70,6 +70,19 @@
   .panel-title button { cursor: pointer; background: var(--page); border: 1px solid var(--hairline); border-radius: 6px;
                           padding: 0.3rem 0.7rem; color: var(--ink); font-size: 0.78rem; white-space: nowrap; }
   #panel-title-text { flex: 1; text-align: center; }
+  details.menu { position: relative; }
+  details.menu > summary { cursor: pointer; list-style: none; background: var(--page); border: 1px solid var(--hairline);
+                           border-radius: 6px; padding: 0.3rem 0.7rem; font-size: 0.78rem; font-weight: 400; color: var(--ink); }
+  details.menu > summary::-webkit-details-marker { display: none; }
+  details.menu[aria-disabled=true] > summary { opacity: 0.5; pointer-events: none; }
+  details.menu .menu-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface);
+                             border: 1px solid var(--hairline); border-radius: 6px; padding: 0.25rem; min-width: 12rem;
+                             box-shadow: 0 4px 14px rgba(0,0,0,0.15); display: flex; flex-direction: column; }
+  details.menu .menu-items button { text-align: left; border: 0; background: transparent; padding: 0.4rem 0.6rem; }
+  details.menu .menu-items button:hover { background: var(--page); }
+  .detail-actions { display: flex; gap: 0.5rem; margin: 0.6rem 0; }
+  .detail-actions button { cursor: pointer; background: var(--page); border: 1px solid var(--hairline); border-radius: 6px;
+                           padding: 0.25rem 0.6rem; color: var(--ink); font-size: 0.75rem; }
   #task-table-wrap { max-height: 860px; overflow-y: auto; }
   table.tasks { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
   table.tasks th { position: sticky; top: 0; background: var(--surface); text-align: left; padding: 0.5rem 0.6rem;
@@ -170,6 +183,15 @@
         <button id="prev-btn">&larr; prev</button>
         <span id="panel-title-text">Select a task to render its network</span>
         <button id="orient-btn">&harr; Horizontal</button>
+        <details class="menu" id="export-menu" aria-disabled="true">
+          <summary title="Export the network shown, or the evidence behind it">Export &#9662;</summary>
+          <div class="menu-items">
+            <button data-export="svg" title="Vector figure of the whole route, as displayed">Network as SVG</button>
+            <button data-export="png" title="Raster image of the whole route (3x)">Network as PNG</button>
+            <button data-export="json" title="Nodes and edges with scores, fluxes and complexes">Network data (JSON)</button>
+            <button data-export="evidence" title="Every reaction of this route: evidence, complexes and gene values, one row per gene">Evidence of all reactions (TSV)</button>
+          </div>
+        </details>
         <button id="next-btn">next &rarr;</button>
         <button class="restore" data-view="detail" title="Show the detail panel again (d)">&lsaquo; Detail</button>
       </div>
