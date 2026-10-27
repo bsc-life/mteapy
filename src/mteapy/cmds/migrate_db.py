@@ -28,7 +28,7 @@ from collections import Counter
 from cobra.io import read_sbml_model
 
 from mteapy import taskdb
-from mteapy.taskdb import model_file_sha256, task_source_sha256
+from mteapy.taskdb import model_file_sha256, reaction_set_hash, task_source_sha256
 from mteapy.tasks import parse_task_file, task_definition_hash
 
 
@@ -83,8 +83,8 @@ def main(argv=None) -> int:
             for tid, stored in old.execute("SELECT task_id, definition_hash FROM tasks WHERE source = ?", (source,))
         }
         dropped, kept_tasks = Counter(), set()
-        for route_id, task_id, rhash, first_seen in old.execute(
-            "SELECT route_id, task_id, reaction_set_hash, first_seen_at FROM routes WHERE source = ? AND model_id = ?",
+        for route_id, task_id, first_seen in old.execute(
+            "SELECT route_id, task_id, first_seen_at FROM routes WHERE source = ? AND model_id = ?",
             (source, old_model_id),
         ).fetchall():
             if task_id not in tasks:
@@ -109,7 +109,7 @@ def main(argv=None) -> int:
                 continue
             new_route = new.execute(
                 "INSERT INTO routes (task_pk, reaction_set_hash, n_reactions, first_seen_at) VALUES (?, ?, ?, ?)",
-                (task_pk, rhash, len(rows), first_seen),
+                (task_pk, reaction_set_hash([r for r, _ in rows]), len(rows), first_seen),
             ).lastrowid
             new.executemany(
                 "INSERT INTO route_reactions VALUES (?, ?, ?)", [(new_route, rxn_pks[r], f) for r, f in rows]

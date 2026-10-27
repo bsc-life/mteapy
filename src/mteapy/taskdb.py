@@ -172,6 +172,35 @@ def reaction_set_hash(reactions) -> str:
     return hashlib.sha256("\n".join(sorted(reactions)).encode("utf-8")).hexdigest()
 
 
+def rehash_routes(conn: sqlite3.Connection) -> int:
+    """Recompute every route's `reaction_set_hash` from its stored reactions.
+
+    Routes migrated from the legacy database kept the hashes it computed (a
+    different join character), so a lookup by `reaction_set_hash` never found
+    them and the duplicate check in `record_enumeration_result` missed them.
+    Returns the number of hashes changed; raises, changing nothing, if two
+    routes of one task turn out to be the same reaction set.
+    """
+    names = dict(conn.execute("SELECT rxn_pk, rxn_id FROM reactions"))
+    members: dict[int, list[str]] = {}
+    for route_id, rxn_pk in conn.execute("SELECT route_id, rxn_pk FROM route_reactions"):
+        members.setdefault(route_id, []).append(names[rxn_pk])
+    updates, seen = [], {}
+    for route_id, task_pk, old in conn.execute("SELECT route_id, task_pk, reaction_set_hash FROM routes").fetchall():
+        new = reaction_set_hash(members.get(route_id, []))
+        if (task_pk, new) in seen:
+            raise ValueError(f"routes {seen[(task_pk, new)]} and {route_id} of task_pk {task_pk} are the same reaction set")
+        seen[(task_pk, new)] = route_id
+        if new != old:
+            updates.append((new, route_id))
+    # UNIQUE (task_pk, hash) is enforced per statement: go through a temporary value
+    conn.executemany("UPDATE routes SET reaction_set_hash = 'tmp:' || route_id WHERE route_id = ?",
+                     [(r,) for _, r in updates])
+    conn.executemany("UPDATE routes SET reaction_set_hash = ? WHERE route_id = ?", updates)
+    conn.commit()
+    return len(updates)
+
+
 def create_db(path: str) -> sqlite3.Connection:
     """Create a new, empty schema-v2 database at `path` (must not exist)."""
     import os

@@ -230,3 +230,31 @@ def test_enumerated_toy_routes_round_trip_through_the_database(db):
     assert sorted(map(sorted, stored.values())) == sorted(map(sorted, (r.reactions for r in found)))
     for route_id, reactions in stored.items():
         assert set(taskdb.load_route_fluxes(conn, route_id)) == set(reactions)
+
+
+def test_rehash_routes_makes_legacy_hashes_findable(db):
+    conn = db[0]
+    pk = _two_task_list(db)["10"]
+    kw = dict(status="optimal", max_routes=10, hit_cap=False, truncated=False, solver="glpk", elapsed_seconds=1.0)
+    (route_id,) = taskdb.record_enumeration_result(conn, pk, [frozenset({"R1", "R2"})], [{"R1": 1.0, "R2": 1.0}], **kw)
+    conn.execute("UPDATE routes SET reaction_set_hash = 'R1|R2' WHERE route_id = ?", (route_id,))   # a migrated route
+    assert taskdb.rehash_routes(conn) == 1
+    assert taskdb.rehash_routes(conn) == 0
+    again = taskdb.record_enumeration_result(conn, pk, [frozenset({"R1", "R2"})], [{"R1": 1.0, "R2": 1.0}], **kw)
+    assert again == [route_id]                      # found, not inserted a second time
+    assert conn.execute("SELECT COUNT(*) FROM routes").fetchone()[0] == 1
+
+
+def test_bundled_database_hashes_match_the_current_scheme():
+    from mteapy import registry
+    entry = registry.resolve_model()
+    if entry.problems:
+        pytest.skip(f"bundled database unusable here: {entry.problems}")
+    conn = taskdb.connect(entry.db_path)
+    names = dict(conn.execute("SELECT rxn_pk, rxn_id FROM reactions"))
+    members = {}
+    for route_id, rxn_pk in conn.execute("SELECT route_id, rxn_pk FROM route_reactions"):
+        members.setdefault(route_id, []).append(names[rxn_pk])
+    wrong = [r for r, h in conn.execute("SELECT route_id, reaction_set_hash FROM routes")
+             if taskdb.reaction_set_hash(members[r]) != h]
+    assert not wrong, f"{len(wrong)} routes carry a stale reaction_set_hash; run taskdb.rehash_routes"
