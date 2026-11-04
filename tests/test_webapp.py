@@ -466,6 +466,7 @@ def test_cli_tas_bundle_loads_in_the_visualizer(client, tmp_path, monkeypatch, s
 
     info, loaded = _bundle_results(client, bundle)
     assert info["config"]["method"] == "TAS" and loaded["samples"] == ["s1", "s2"]
+    assert info["config"]["loaded"] and info["config"]["source"]["command"].startswith("run-mtea")
     tsv = pd.read_csv(tmp_path / "out" / "tas_scores.tsv", sep="\t").set_index("task_id")
     for task in loaded["tasks"]:
         assert task["scores"] == pytest.approx([tsv.loc[int(task["task_id"]) if tsv.index.dtype != object

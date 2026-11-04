@@ -160,9 +160,54 @@ const runProgress = document.getElementById("run-progress");
 const runStatus = document.getElementById("run-status");
 let activeRunId = null;
 
+const resultsStatus = document.getElementById("results-status");
 function setRunStatus(text, isError = false) {
-  runStatus.textContent = text;
-  runStatus.classList.toggle("err", isError);
+  for (const el of [runStatus, resultsStatus]) {
+    el.textContent = text;
+    el.classList.toggle("err", isError);
+  }
+}
+
+// ---------- Compute / Results tabs ----------
+// Compute: upload data and score it here. Results: open what was computed elsewhere (the CLI writes
+// the same file with --bundle) or earlier, and save/export the current run. Both feed the same
+// task table and network view below.
+
+let currentTab = "compute";
+try { currentTab = localStorage.getItem("mteapy.tab") === "results" ? "results" : "compute"; } catch (e) { /* ignore */ }
+
+function setTab(tab) {
+  currentTab = tab;
+  const wrap = document.querySelector(".wrap");
+  wrap.classList.toggle("tab-compute", tab === "compute");
+  wrap.classList.toggle("tab-results", tab === "results");
+  document.querySelectorAll(".tabs button").forEach(b => {
+    b.classList.toggle("on", b.dataset.tab === tab);
+    b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  });
+  try { localStorage.setItem("mteapy.tab", tab); } catch (e) { /* ignore */ }
+  if (currentData) showPanel(currentIndex);   // the bars change height: re-fit the network
+}
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+
+function renderResultsInfo() {
+  const host = document.getElementById("results-info");
+  host.innerHTML = "";
+  const line = (text, cls) => { const d = document.createElement("div"); d.className = "line " + (cls || ""); d.textContent = text; host.appendChild(d); return d; };
+  if (!currentRun) {
+    const d = document.createElement("span"); d.className = "placeholder";
+    d.textContent = "No results yet. Load a file written by the command line (run-mtea analyze ... --bundle) or saved from this page, or run an analysis in the Compute tab.";
+    host.appendChild(d);
+    return;
+  }
+  const cfg = currentRun.config;
+  const strong = line(`${cfg.method}  \u00b7  ${cfg.model} / ${cfg.task_list}  \u00b7  ${Object.keys(currentRun.byTask).length} tasks x ${currentRun.samples.length} sample(s)`);
+  strong.style.fontWeight = "600";
+  line(Object.entries(cfg.params).filter(([, v]) => v !== null && v !== "").map(([k, v]) => `${k}=${v}`).join(", "));
+  const where = cfg.loaded ? `Loaded from a file${cfg.saved_at ? `, written ${cfg.saved_at}` : ""}${cfg.mteapy_version ? ` by mteapy ${cfg.mteapy_version}` : ""}`
+                           : "Computed in this page";
+  line(where, "src");
+  if (cfg.source && cfg.source.command) line(`Command: ${cfg.source.command}`, "src");
 }
 
 async function loadMethods() {
@@ -329,6 +374,7 @@ function onDatasetLoaded(info) {
 
 function clearRun(note) {
   currentRun = null;
+  renderResultsInfo();
   allTasks = allTasks.map(t => ({ ...t, score: null, pvalue: null, is_tied: false, is_complete: false, winning_route_ids: [] }));
   renderTaskTable();
   if (note) setRunStatus(note);
@@ -366,6 +412,7 @@ async function startRun() {
   cancelBtn.hidden = false;
   runProgress.hidden = false;
   currentRun = null;
+  renderResultsInfo();
   await pollRun(info);
 }
 
@@ -394,8 +441,9 @@ async function pollRun(info) {
     };
     const p = Object.entries(info.config.params).map(([k, v]) => `${k}=${v}`).join(", ");
     setRunStatus(`${info.config.method} (${p}) done in ${info.seconds}s: ${data.tasks.length} tasks x ${data.samples.length} samples ` +
-                 `(${info.genes_matched} model genes found in the data).`);
+                 `(${info.genes_matched} model genes found in the data). Save or export it in the Results tab.`);
     showChecks([], info.warnings || []);
+    renderResultsInfo();
     if (data.samples.join("\u0000") !== [...sampleSelect.options].map(o => o.value).join("\u0000")) populateSampleSelect(data.samples);
     applyRunScores();
     if (selectedKey) selectTask(selectedKey);
@@ -417,6 +465,17 @@ function download(url) {
 document.getElementById("save-btn").addEventListener("click", () => currentRun && download(`/api/runs/${currentRun.run_id}/export`));
 document.getElementById("tsv-btn").addEventListener("click", () => currentRun && download(`/api/runs/${currentRun.run_id}/export?format=tsv`));
 
+// A results file is JSON, optionally gzip-compressed (the CLI writes .json.gz with --bundle *.gz).
+async function readResultsFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    if (typeof DecompressionStream === "undefined") throw new Error("this browser cannot read .gz files; unzip it first");
+    try { return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text(); }
+    catch { throw new Error("corrupt gzip data"); }
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 const loadInput = document.getElementById("load-input");
 document.getElementById("load-btn").addEventListener("click", () => loadInput.click());
 loadInput.addEventListener("change", async () => {
@@ -425,8 +484,8 @@ loadInput.addEventListener("change", async () => {
   if (!file) return;
   setRunStatus(`Loading ${file.name}...`);
   let bundle;
-  try { bundle = JSON.parse(await file.text()); }
-  catch { setRunStatus(`${file.name} is not a results file (invalid JSON).`, true); return; }
+  try { bundle = JSON.parse(await readResultsFile(file)); }
+  catch (e) { setRunStatus(`${file.name} is not a results file (${e.message || "invalid JSON"}).`, true); return; }
   const res = await fetch("/api/runs/import", { method: "POST", headers: { "Content-Type": "application/json" },
                                                 body: JSON.stringify(bundle) });
   if (!res.ok) {
@@ -461,6 +520,8 @@ loadInput.addEventListener("change", async () => {
                `${data.samples.length} samples.` + (datasetId ? "" : " (Nothing to re-run: these results are loaded as scores only.)"));
   applyRunScores();
   showChecks([], info.warnings || []);
+  renderResultsInfo();
+  setTab("results");
 });
 
 runBtn.addEventListener("click", startRun);
@@ -992,6 +1053,8 @@ document.addEventListener("keydown", ev => {
   if (part) toggleView(part);
 });
 applyView();
+setTab(currentTab);
+renderResultsInfo();
 
 loadMethods().then(updateRunButton);
 loadModels();

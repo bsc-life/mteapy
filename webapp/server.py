@@ -551,7 +551,9 @@ async def api_import_run(bundle: dict = Body(...)):
         dataset_id = str(uuid.uuid4())
         _DATASETS[dataset_id] = signal
     config = {"model": ctx.entry.key, "task_list": task_list, "dataset_id": dataset_id, "method": method.id,
-              "params": params, "loaded": True, "saved_at": bundle.get("created")}
+              "params": params, "loaded": True, "saved_at": bundle.get("created"),
+              "mteapy_version": bundle.get("mteapy_version"),
+              "source": bundle.get("source") if isinstance(bundle.get("source"), dict) else None}
     result = {"samples": list(samples), "tasks": tasks, "signal": signal,
               "aggregation": aggregation, "or_func": or_func}
     run = RUNS.add_finished(config, result, genes_matched=len(signal), warnings=warnings)

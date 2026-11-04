@@ -40,6 +40,19 @@
   .has-pvalue.hide-detail .grid { grid-template-columns: 430px minmax(0, 1fr); }
   .hide-tasks.hide-detail .grid { grid-template-columns: minmax(0, 1fr); }
   .hide-tasks #tasks-panel, .hide-detail #detail-panel, .hide-legend .legend, .hide-controls #controls-bar, .hide-analysis #analysis-bar, .hide-analysis #method-desc { display: none; }
+  .tabs { display: flex; gap: 0.3rem; margin: 0 0 0.8rem; border-bottom: 1px solid var(--hairline); }
+  .tabs button { cursor: pointer; background: none; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+                 padding: 0.45rem 1.1rem; font-size: 0.85rem; color: var(--ink-2); margin-bottom: -1px; }
+  .tabs button.on { background: var(--surface); border-color: var(--hairline); color: var(--ink); font-weight: 600; }
+  .tab-results .only-compute, .tab-compute .only-results { display: none !important; }
+  .results-bar { border-color: var(--accent); align-items: flex-start; }
+  .results-bar button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .results-bar button:disabled { opacity: 0.5; cursor: default; }
+  #results-info { font-size: 0.8rem; color: var(--ink-2); flex: 1 1 24rem; min-width: 0; }
+  #results-info .line { margin: 0.1rem 0; }
+  #results-info .src { color: var(--muted); font-size: 0.74rem; word-break: break-all; }
+  #results-status { font-size: 0.8rem; color: var(--muted); flex-basis: 100%; }
+  #results-status.err { color: var(--evidence-none); }
   .analysis { border-color: var(--accent); }
   #method-params { display: inline-flex; flex-wrap: wrap; gap: 0.9rem; align-items: center; }
   .analysis .param { display: inline-flex; gap: 0.3rem; align-items: center; }
@@ -122,31 +135,38 @@
   </div>
   <div class="sub">Context-aware metabolic task scoring &mdash; pick a model and task list, upload gene expression, score every task, inspect the winning route.</div>
 
+  <div class="tabs" role="tablist" aria-label="Compute a run here, or look at results computed elsewhere">
+    <button role="tab" data-tab="compute" id="tab-compute" title="Upload data and score the tasks in this page">Compute</button>
+    <button role="tab" data-tab="results" id="tab-results" title="Open results (also from the command line) and save or export them">Results</button>
+  </div>
+
   <div class="toolbar" id="controls-bar">
     <label>Model: <select id="model-select" disabled><option>loading...</option></select></label>
     <label>Task list: <select id="tasklist-select" disabled><option>&mdash;</option></select></label>
-    <label>Upload data (CSV/TSV: gene id first, then expression samples or a differential-expression table's columns): <input id="file-input" type="file" accept=".csv,.tsv,.txt,.gct"></label>
-    <label>Example dataset: <button id="load-gtex-btn">Load bundled GTEx tissues</button></label>
+    <label class="only-compute">Upload data (CSV/TSV: gene id first, then expression samples or a differential-expression table's columns): <input id="file-input" type="file" accept=".csv,.tsv,.txt,.gct"></label>
+    <label class="only-compute">Example dataset: <button id="load-gtex-btn">Load bundled GTEx tissues</button></label>
     <label>Sample: <select id="sample-select" disabled><option>upload data first</option></select></label>
     <span id="status-msg"></span>
   </div>
 
-  <div class="toolbar analysis" id="analysis-bar">
+  <div class="toolbar analysis only-compute" id="analysis-bar">
     <label>Method: <select id="method-select" disabled><option>loading...</option></select></label>
     <span id="method-params"></span>
     <button id="run-btn" class="primary" disabled title="Score every task of the selected list against every sample">Run</button>
     <button id="cancel-btn" hidden>Cancel</button>
     <progress id="run-progress" hidden max="1" value="0"></progress>
     <span id="run-status"></span>
-    <span class="result-files">
-      <button id="save-btn" disabled title="Download this run as a self-contained file (scores, parameters, model id and the expression it used)">Save results</button>
-      <button id="tsv-btn" disabled title="Download the task x sample score matrix as TSV">Export TSV</button>
-      <button id="load-btn" title="Load results saved earlier; they are only accepted against the model and routes they were computed on">Load results</button>
-      <input id="load-input" type="file" accept=".json,application/json" hidden>
-    </span>
+  </div>
+  <div class="toolbar results-bar only-results" id="results-bar">
+    <button id="load-btn" class="primary" title="Open a results file written by this page or by the command line (run-mtea analyze ... --bundle); it is only accepted against the model and routes it was computed on">Load results file&hellip;</button>
+    <input id="load-input" type="file" accept=".json,.gz,application/json,application/gzip" hidden>
+    <button id="save-btn" disabled title="Download this run as a self-contained file (scores, parameters, model id and the signal it used)">Save results</button>
+    <button id="tsv-btn" disabled title="Download the task x sample score matrix as TSV">Export TSV</button>
+    <div id="results-info"><span class="placeholder">No results yet. Load a file written by the command line (<code>run-mtea analyze ... --bundle</code>) or saved from this page, or run an analysis in the Compute tab.</span></div>
+    <span id="results-status"></span>
   </div>
   <div id="run-warnings" class="run-warnings" hidden></div>
-  <div id="method-desc"></div>
+  <div id="method-desc" class="only-compute"></div>
 
   <div class="legend">
     <span>expressed (supported/ambiguous):</span>

@@ -35,6 +35,14 @@ the database.
 
 - **Model / Task list**: pick a model, then one of its task lists. Task
   ids are only unique within a list, so lists are never mixed in one table.
+- **Compute and Results tabs**: *Compute* is where you upload data and score it in the page (the model/task list
+  selectors, the analysis bar and **Run**). *Results* is for looking at results computed elsewhere: **Load results
+  file** opens a results file written by the command line (`run-mtea analyze TAS|CellFie|TIDE ... --mapping-strategy
+  context-aware --bundle results.json[.gz]`) or saved from this page, and **Save results** / **Export TSV** act on the
+  run shown. The task table and the network are the same in both tabs. The page shows what the loaded file is: method,
+  parameters, model/task list, when and with which mteapy version it was written and the command that produced it.
+  A `.gz` file is decompressed in the browser. This lets you run experiments (on a cluster, in a script) and use the
+  page only to explore them; the machine with the page needs the same model and routes (the file is refused otherwise).
 - **Analysis bar**: pick a method (TAS, CellFie or TIDE), set its parameters (the form is
   generated from `mteapy.methods`, the same definitions the CLI uses), load a
   dataset, press **Run**. Every task of the selected list is scored against
@@ -53,7 +61,7 @@ the database.
   is shown as `< 1/permutations`), scores keep their sign, and the network
   colours down-regulated reactions in a second hue. The permutations are the
   slow part (progress and Cancel work; raise *CPUs* to split them). TIDE-essential
-  is CLI-only for now.
+  is not in the page: it is legacy, superseded by route enumeration and the context-aware scoring, and stays in the CLI only.
 - **Input checks**: before anything runs, the server looks at the loaded data
   against the chosen method and parameters, and the page shows the result under
   the analysis bar. *Warnings* never block: a "log-FC" column with **no negative
@@ -69,7 +77,7 @@ the database.
   data", its genes dashed). `zero` counts them as 0. The check reports how many
   of the genes the task routes need are missing: a warning for any, and a large
   red box when 10% or more are (the CLI prints a boxed alert).
-- **Save / Load results**: *Save results* downloads a self-contained JSON file
+- **Save / Load results** (Results tab): *Save results* downloads a self-contained JSON file
   (scores, method + parameters, model key and sha256, a fingerprint of the
   task list's routes, and the scoring signal restricted to the genes the routes
   reach -- the expression for TAS, the gene activity levels for CellFie).
