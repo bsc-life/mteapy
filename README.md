@@ -63,6 +63,19 @@ run-mtea [-h] [-v] [-c] [-t] [-s] {TIDE-essential,TIDE,CellFie,TAS}
 ```
 For more details on the input parameters, run the `-h` or `--help` after any of the commands.
 
+**Compute on the command line, explore in the web visualizer.** With `--mapping-strategy context-aware`, TAS, CellFie
+and TIDE accept `--bundle results.json` (or `results.json.gz`, gzip-compressed): a self-contained results file with the
+scores, the method and its parameters, the model and routes they were scored on, and the scoring signal. Open it with
+**Load results** in the web visualizer (`webapp/README.md`) to browse the tasks and their route networks without
+recomputing; it is only accepted against the same model file and routes. The usual TSV outputs are still written.
+
+```sh
+run-mtea analyze TAS expr.tsv -o out --mapping-strategy context-aware --task-list HumanGEM-Full --bundle out/tas.json.gz
+```
+
+TIDE-essential is legacy: route enumeration and the context-aware scoring supersede it, so it is kept in the CLI but
+it is not in the visualizer and not part of the results file.
+
 ### Python module
 
 If used as a Python module, import the `mteapy` module or directly import the desired wrapper functions to compute a framework.

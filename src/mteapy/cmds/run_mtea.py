@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import pandas as pd
 from time import time
 from cobra.io import read_sbml_model
@@ -12,7 +13,7 @@ from mteapy.utils import print_banner, mask_lfc_values, add_task_metadata, check
 from mteapy.tide import compute_TIDEe, compute_TIDE
 from mteapy.cellfie import compute_CellFie
 from mteapy.context_scoring import build_complex_cache, compute_TAS
-from mteapy import inputcheck, registry, taskdb
+from mteapy import inputcheck, methods, registry, results, taskdb
 from mteapy.cmds import enumerate_routes as enumerate_routes_cmd
 
 
@@ -67,11 +68,40 @@ def _load_context_aware_inputs(args):
               f"Run `run-mtea tasks enumerate-routes --task-list {args.task_list}` first.{bc.ENDC}\n")
         exit(1)
     print(f"Loaded {len(tasks_routes)} tasks' routes for task list {args.task_list!r}.")
+    descriptions = {t["task_id"]: t["description"] for t in taskdb.list_tasks(conn, args.task_list)}
+    context = {"model_file": model_file, "model_spec": args.model, "descriptions": descriptions,
+               "routes_fingerprint": taskdb.task_list_routes_fingerprint(conn, args.task_list)}
 
     all_reactions = sorted({r for routes in tasks_routes.values() for reactions in routes.values() for r in reactions})
     complex_cache = build_complex_cache(model, all_reactions)
 
-    return model, tasks_routes, complex_cache
+    return model, tasks_routes, complex_cache, context
+
+
+def _check_bundle_option(args):
+    """--bundle only makes sense for context-aware scoring (a classic run has no routes to draw)."""
+    if getattr(args, "bundle", None) and args.mapping_strategy != "context-aware":
+        print(f"{bc.FAIL}ERROR: --bundle needs --mapping-strategy context-aware (the visualizer draws routes).{bc.ENDC}\n")
+        exit(1)
+    if getattr(args, "bundle", None) and os.path.isdir(args.bundle):
+        print(f"{bc.FAIL}ERROR: --bundle expects a file name, {args.bundle} is a directory.{bc.ENDC}\n")
+        exit(1)
+
+
+def _write_bundle(args, method_id, model, tasks_routes, complex_cache, context, data, pvalues=None):
+    """Score the loaded task list once more the way the visualizer does and save the results file.
+    (Cheap next to what produced the TSVs: one pass over the routes; TIDE's permutations are reused.)"""
+    method = methods.get_method(method_id)
+    params = methods.validate_params(method, {p.name: getattr(args, p.dest or p.name) for p in method.params})
+    print("Saving results bundle", end=" ")
+    result = results.score_run(model, tasks_routes, complex_cache, context["descriptions"], method_id, params, data,
+                               pvalues=pvalues)
+    bundle = results.build_bundle(
+        model=model, model_info=results.model_identity(context["model_file"], context["model_spec"]),
+        task_list=args.task_list, routes_fingerprint=context["routes_fingerprint"], routes=tasks_routes,
+        method_id=method_id, params=params, result=result, source={"command": " ".join(sys.argv)})
+    results.write_bundle(args.bundle, bundle)
+    print(f"- OK ({args.bundle}). Open it with 'Load results' in the web visualizer.")
 
 
 def _list_models() -> None:
@@ -142,6 +172,7 @@ def main() -> None:
         if args.analyze_command == "TIDE":
 
             print("Starting Tasks Inferred from Differential Expression (TIDE) analysis.")
+            _check_bundle_option(args)
 
             # File and dir status check
             if not os.path.isfile(args.dea_file):
@@ -206,7 +237,7 @@ def main() -> None:
                 print(f"\tRandom seed  = {args.random_seed}")
 
             if args.mapping_strategy == "context-aware":
-                model, tasks_routes, complex_cache = _load_context_aware_inputs(args)
+                model, tasks_routes, complex_cache, context = _load_context_aware_inputs(args)
                 task_structure = None
             else:
                 print("Loading metabolic model", end=" ")
@@ -214,7 +245,7 @@ def main() -> None:
                 print("- OK.")
                 task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"),
                                              sep="\t", index_col=0)
-                tasks_routes = complex_cache = None
+                tasks_routes = complex_cache = context = None
 
             _check_gene_coverage(model, tasks_routes, set(expr_data_df[args.gene_col].dropna()),
                                  args.missing_genes, task_structure)
@@ -244,6 +275,10 @@ def main() -> None:
                 args.random_seed,
                 missing_genes=args.missing_genes,
             )
+            if args.bundle:
+                _write_bundle(args, "TIDE", model, tasks_routes, complex_cache, context,
+                              results.tide_signal(expr_data_df.set_index(args.gene_col), args.lfc_col, args.missing_genes),
+                              pvalues=dict(zip(TIDE_results["task_id"], (float(p) for p in TIDE_results["pvalue"]))))
             print("Saving results", end = " ")
             TIDE_results.rename(columns={"score": "TIDE_score", "pvalue": "TIDE_pvalue"}, inplace=True)
             TIDE_e_results.rename(columns={"score": "TIDEe_score", "pvalue": "TIDEe_pvalue"}, inplace=True)
@@ -261,6 +296,7 @@ def main() -> None:
         elif args.analyze_command == "CellFie":
 
             print("Starting CellFie analysis.")
+            _check_bundle_option(args)
 
             # File and dir status check
             if not os.path.isfile(args.expr_file):
@@ -292,7 +328,7 @@ def main() -> None:
                 expr_data_df.drop(columns=[args.gene_col]).select_dtypes(include="number"), "CellFie"))
 
             if args.mapping_strategy == "context-aware":
-                model, tasks_routes, complex_cache = _load_context_aware_inputs(args)
+                model, tasks_routes, complex_cache, context = _load_context_aware_inputs(args)
                 task_structure = None
             else:
                 print("Loading metabolic model", end=" ")
@@ -300,7 +336,7 @@ def main() -> None:
                 print("- OK.")
                 task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"),
                                              sep="\t", index_col=0)
-                tasks_routes = None
+                tasks_routes = context = None
 
             # Filtering genes not in model
             model_genes = [str(gene) for gene in model.genes]
@@ -346,6 +382,9 @@ def main() -> None:
                 missing_genes=args.missing_genes,
             )
 
+            if args.bundle:
+                _write_bundle(args, "CellFie", model, tasks_routes, complex_cache, context, expr_data_df)
+
             # Adding metadata
             metabolic_scores_df = add_task_metadata(metabolic_scores_df, task_metadata)
             binary_scores_df = add_task_metadata(binary_scores_df, task_metadata)
@@ -364,6 +403,7 @@ def main() -> None:
         elif args.analyze_command == "TAS":
 
             print("Starting Task Activity Score (TAS) analysis.")
+            _check_bundle_option(args)
 
             # File and dir status check
             if not os.path.isfile(args.expr_file):
@@ -396,7 +436,7 @@ def main() -> None:
                     expr_data_df.drop(columns=[args.gene_col]).select_dtypes(include="number"), "TAS"))
 
             if args.mapping_strategy == "context-aware":
-                model, tasks_routes, complex_cache = _load_context_aware_inputs(args)
+                model, tasks_routes, complex_cache, context = _load_context_aware_inputs(args)
                 task_structure = None
             else:
                 print("Loading metabolic model", end=" ")
@@ -404,7 +444,7 @@ def main() -> None:
                 print("- OK.")
                 task_structure = pd.read_csv(os.path.join(curdir, "../data/task_structure_matrix.tsv"),
                                              sep="\t", index_col=0)
-                tasks_routes = None
+                tasks_routes = context = None
 
             # Filtering genes not in model
             model_genes = [str(gene) for gene in model.genes]
@@ -436,6 +476,9 @@ def main() -> None:
                 tasks_routes=tasks_routes,
                 missing_genes=args.missing_genes,
             )
+
+            if args.bundle:
+                _write_bundle(args, "TAS", model, tasks_routes, complex_cache, context, expr_data_df)
 
             # Adding metadata
             scores_df = add_task_metadata(scores_df, task_metadata)

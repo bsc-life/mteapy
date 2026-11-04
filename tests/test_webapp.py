@@ -2,6 +2,7 @@
 
 import importlib
 import io
+import pandas as pd
 import sys
 import time
 from pathlib import Path
@@ -431,3 +432,87 @@ def test_missing_genes_are_excluded_by_default_and_warned_about(client):
     [panel] = shown["panels"]
     r2 = next(n for n in panel["nodes"] if n.get("reaction_id") == "R2")
     assert r2["evidence"] == "no_data" and r2["gene_values"] == {"g2": None} and r2["complex_scores"] == [None]
+
+
+# ------------------------------------------------------------------ results files written by the CLI
+
+def _cli(monkeypatch, *argv):
+    """Run `run-mtea` in-process with `argv`."""
+    from mteapy.cmds import run_mtea
+    monkeypatch.setattr(sys, "argv", ["run-mtea", *argv])
+    monkeypatch.setattr(run_mtea, "check_ensemblid", lambda genes: True)    # the toy model's genes are not Ensembl ids
+    run_mtea.main()
+
+
+def _bundle_results(client, bundle):
+    r = client.post("/api/runs/import", json=bundle)
+    assert r.status_code == 201, r.text
+    return r.json(), client.get(f"/api/runs/{r.json()['run_id']}/results").json()
+
+
+@pytest.mark.parametrize("suffix", [".json", ".json.gz"])
+def test_cli_tas_bundle_loads_in_the_visualizer(client, tmp_path, monkeypatch, suffix):
+    from mteapy import results
+    expr = tmp_path / "expr.tsv"
+    expr.write_text(EXPRESSION)
+    bundle_path = str(tmp_path / f"tas{suffix}")
+    _cli(monkeypatch, "analyze", "TAS", str(expr), "-o", str(tmp_path / "out"), "--model", "toy-1",
+         "--task-list", "ToyTasks", "--mapping-strategy", "context-aware", "--bundle", bundle_path)
+    bundle = results.read_bundle(bundle_path)
+    assert bundle["format"] == "mteapy-results" and bundle["model"]["key"] == "toy-1"
+    assert bundle["method"]["id"] == "TAS" and bundle["source"]["command"].startswith("run-mtea")
+    if suffix.endswith(".gz"):
+        assert open(bundle_path, "rb").read(2) == b"\x1f\x8b"
+
+    info, loaded = _bundle_results(client, bundle)
+    assert info["config"]["method"] == "TAS" and loaded["samples"] == ["s1", "s2"]
+    tsv = pd.read_csv(tmp_path / "out" / "tas_scores.tsv", sep="\t").set_index("task_id")
+    for task in loaded["tasks"]:
+        assert task["scores"] == pytest.approx([tsv.loc[int(task["task_id"]) if tsv.index.dtype != object
+                                                          else task["task_id"], s] for s in loaded["samples"]])
+    # the network of the loaded run can be drawn
+    r = client.get(f"/api/models/toy-1/task_lists/ToyTasks/tasks/1/network?run_id={info['run_id']}&sample=s1")
+    assert r.status_code == 200 and r.json()["has_data"]
+
+
+def test_cli_tide_bundle_keeps_the_pvalues(client, tmp_path, monkeypatch):
+    from mteapy import results
+    dea = tmp_path / "dea.tsv"
+    dea.write_text("gene_id\tlog2FoldChange\tpvalue\ng1\t2.0\t0.001\ng2\t1.5\t0.01\ng3\t-1.0\t0.02\ng4\t0.5\t0.4\ng_tr\t0.1\t0.9\n")
+    bundle_path = str(tmp_path / "tide.json.gz")
+    _cli(monkeypatch, "analyze", "TIDE", str(dea), "-o", str(tmp_path / "tide.tsv"), "--model", "toy-1",
+         "--task-list", "ToyTasks", "--mapping-strategy", "context-aware", "-n", "20", "--random_seed", "1",
+         "--bundle", bundle_path)
+    info, loaded = _bundle_results(client, results.read_bundle(bundle_path))
+    assert info["config"]["method"] == "TIDE"
+    assert all(len(t["pvalues"]) == 1 for t in loaded["tasks"])
+    tsv = pd.read_csv(tmp_path / "tide.tsv", sep="\t").set_index("task_id")
+    for t in loaded["tasks"]:
+        assert t["pvalues"][0] == pytest.approx(tsv.loc[int(t["task_id"]), "TIDE_pvalue"])
+        assert t["scores"][0] == pytest.approx(tsv.loc[int(t["task_id"]), "TIDE_score"])
+
+
+def test_bundle_needs_context_aware_scoring(client, tmp_path, monkeypatch, capsys):
+    expr = tmp_path / "expr.tsv"
+    expr.write_text(EXPRESSION)
+    with pytest.raises(SystemExit):
+        _cli(monkeypatch, "analyze", "TAS", str(expr), "-o", str(tmp_path / "out"), "--bundle", str(tmp_path / "x.json"))
+    assert "context-aware" in capsys.readouterr().out
+    assert not (tmp_path / "x.json").exists()
+
+
+def test_a_server_export_and_a_cli_bundle_have_the_same_shape(client, tmp_path, monkeypatch):
+    """The two writers share `mteapy.results`: same keys, same signal, same scores for the same data."""
+    from mteapy import results
+    expr = tmp_path / "expr.tsv"
+    expr.write_text(EXPRESSION)
+    path = str(tmp_path / "cli.json")
+    _cli(monkeypatch, "analyze", "TAS", str(expr), "-o", str(tmp_path / "out"), "--model", "toy-1",
+         "--task-list", "ToyTasks", "--mapping-strategy", "context-aware", "--bundle", path)
+    cli = results.read_bundle(path)
+    run_id = _run(client, _upload(client)).json()["run_id"]
+    _wait(client, run_id)
+    web = client.get(f"/api/runs/{run_id}/export").json()
+    assert set(cli) - {"source"} == set(web)
+    assert cli["tasks"] == web["tasks"] and cli["signal"] == web["signal"]
+    assert cli["task_list"] == web["task_list"] and cli["model"] == web["model"]

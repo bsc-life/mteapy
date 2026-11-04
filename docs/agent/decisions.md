@@ -4,6 +4,18 @@ Newest first. Each entry is here because the reasoning isn't obvious
 from the diff alone -- if you're about to "simplify" or "fix" one of
 these, read the entry first.
 
+## One results file for the CLI and the web app (2026-11-04)
+
+`mteapy.results` holds what both front ends do -- `score_run` (score a task list with TAS/CellFie/TIDE, context-aware)
+and the `mteapy-results` bundle (`build_bundle`, `write_bundle`/`read_bundle`; JSON, gzip when the name ends in `.gz`).
+The webapp's `Save results` and `run-mtea analyze {TAS,CellFie,TIDE} --bundle FILE` write the same file (the CLI adds a
+`source.command`), and the visualizer loads either. JSON, not XML: the browser reads it natively and it is already the
+format; the file holds the scoring *signal*, never a per-task network, so networks/evidence are rebuilt by the
+installed code and a file cannot disagree with the rules that read it. Parquet was not added: a browser needs a JS
+reader library for it (an extra dependency, and the web page has to work offline), and gzip JSON is small enough.
+`--bundle` requires `--mapping-strategy context-aware`. TIDE-essential is legacy (superseded by route enumeration plus
+context-aware scoring): kept in the CLI, not in the results file or the GUI.
+
 ## Missing genes: one rule for every method, `exclude` by default (2026-10-27)
 
 "Missing" means a gene the data has no value for (no row, or NaN) -- not a gene

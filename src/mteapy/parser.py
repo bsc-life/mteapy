@@ -48,6 +48,14 @@ def _add_mapping_strategy_args(parser):
                               "--mapping-strategy classic's bundled task_structure_matrix.tsv.")
 
 
+def _add_bundle_arg(parser):
+    parser.add_argument("--bundle", action="store", type=str, dest="bundle", default=None, metavar="FILE",
+                         help="Also write a self-contained results file (scores, parameters, the model and routes "
+                              "they were scored on, and the scoring signal) that the web visualizer opens with "
+                              "'Load results'. A name ending in .gz is gzip-compressed. Needs --mapping-strategy "
+                              "context-aware.")
+
+
 def mtea_parser():
 
     ###########################################
@@ -181,6 +189,7 @@ def mtea_parser():
     TIDE_parser.add_argument("--random_seed", action="store", type=int, dest="random_seed", default=None, help="Random seed for reproducibility. If not provided, a random seed will be generated for each run.")
 
     _add_mapping_strategy_args(TIDE_parser)
+    _add_bundle_arg(TIDE_parser)
 
     TIDE_parser.add_argument("--permutation-strategy", action="store", type=str, dest="permutation_strategy",
                               choices=["argmax", "fixed-route"], default="argmax",
@@ -212,6 +221,7 @@ def mtea_parser():
     CellFie_parser.add_argument("--binary_scores", action="store_true", dest="binary_scores_flag", help="Flag to indicate whether to also return the binary metabolic score matrix as a second result file. See the original publication for more details.")
 
     _add_mapping_strategy_args(CellFie_parser)
+    _add_bundle_arg(CellFie_parser)
 
     ###########################################
     # TAS parser
@@ -230,5 +240,6 @@ def mtea_parser():
     methods.add_arguments(TAS_parser, methods.TAS)
 
     _add_mapping_strategy_args(TAS_parser)
+    _add_bundle_arg(TAS_parser)
 
     return parser

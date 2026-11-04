@@ -26,7 +26,6 @@ looked for; the default is ~/.mteapy/models plus the bundled models.
 
 from __future__ import annotations
 
-import importlib.metadata
 import io
 import json
 import os
@@ -35,7 +34,6 @@ import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -44,10 +42,8 @@ from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from mteapy import inputcheck, methods, registry, taskdb
-from mteapy.cellfie import calculate_GAL
-from mteapy.context_scoring import build_complex_cache, score_task, score_tasks_report
-from mteapy.tide import compute_TIDE
+from mteapy import inputcheck, methods, registry, results, taskdb
+from mteapy.context_scoring import build_complex_cache, score_task
 from mteapy.network import build_route_graph, load_bigg_ids, resolve_boundary_ids
 from mteapy.task_model import build_metabolite_lookup
 from runs import RunManager, check_cancelled
@@ -284,82 +280,21 @@ def _task_list_structures(ctx: ModelContext, task_list: str):
         return ctx.list_routes[task_list], ctx.list_complexes[task_list], ctx.list_descriptions[task_list]
 
 
-def _scoring_conventions(method_id: str, params: dict) -> tuple[str, str]:
-    """(aggregation, or_func) a method scores routes with."""
-    if method_id == "TAS":
-        return params["aggregation"], params["or_func"]
-    if method_id == "CellFie":
-        return "mean", "max"
-    if method_id == "TIDE":
-        return "mean", params["or_func"]
-    raise ValueError(f"no scoring defined for method {method_id!r}")
-
-
-def _scoring_signal(method_id: str, params: dict, data: pd.DataFrame):
-    """(gene signal, aggregation, or_func) that a method scores routes with.
-
-    TAS projects the expression itself; CellFie first turns it into gene
-    activity levels (thresholds are taken over the whole dataset, so this is
-    computed once per run, never per sample); TIDE's `data` already is the
-    (masked) log-fold-change column to score."""
-    aggregation, or_func = _scoring_conventions(method_id, params)
-    if method_id == "CellFie":
-        gal = calculate_GAL(
-            data, thresh_type=params["threshold_type"], local_thresh_type=params["local_threshold_type"],
-            minmaxmean_thresh_type=params["minmaxmean_threshold_type"], upper_bound=params["upper_bound"],
-            lower_bound=params["lower_bound"], global_thresh_type=params["global_threshold_type"],
-            global_value=params["global_value"], log_transformed=params["log_transformed"],
-        )
-        # A gene that is zero everywhere has threshold 0 -> 0/0; it simply has no activity.
-        # (A gene the data has no value for stays missing, which is a different thing.)
-        return gal.fillna(0.0).where(data.notna()), aggregation, or_func
-    return data, aggregation, or_func
-
-
 def _execute_run(run, ctx: ModelContext, data: pd.DataFrame):
     cfg = run.config
     routes, complex_cache, descriptions = _task_list_structures(ctx, cfg["task_list"])
     check_cancelled(run)
     run.total = data.shape[1]
-    signal, aggregation, or_func = _scoring_signal(cfg["method"], cfg["params"], data)
-    check_cancelled(run)
 
     def progress(done, total):
         run.done, run.total = done, total
         check_cancelled(run)
 
-    pvalues = None
-    if cfg["method"] == "TIDE":
-        # The real scores are one cheap pass; the permutations are the run.
-        params = cfg["params"]
-        frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
-                                    complex_cache=complex_cache, missing_genes=params["missing_genes"])
-        run.unit, run.done, run.total = "permutations", 0, params["n_permutations"]
-        found = compute_TIDE(
-            signal, params["lfc_col"], None, ctx.model, or_func, params["n_permutations"], params["n_cpus"],
-            False, params["random_seed"], mapping_strategy="context-aware", tasks_routes=routes,
-            complex_cache=complex_cache, permutation_strategy=params["permutation_strategy"], progress=progress,
-            missing_genes=params["missing_genes"],
-        )
-        pvalues = dict(zip(found["task_id"], (float(p) for p in found["pvalue"])))
-    else:
-        frames = score_tasks_report(routes, ctx.model, signal, aggregation=aggregation, or_func=or_func,
-                                    progress=progress, complex_cache=complex_cache,
-                                    missing_genes=cfg["params"]["missing_genes"])
-    samples = list(signal.columns)
-    tasks = []
-    for task_id in frames["scores"].index:
-        task = {
-            "task_id": task_id, "description": descriptions.get(task_id, ""), "n_routes": len(routes[task_id]),
-            "scores": [float(x) for x in frames["scores"].loc[task_id]],
-            "complete": [bool(x) for x in frames["complete"].loc[task_id]],
-            "tied": [bool(x) for x in frames["tied"].loc[task_id]],
-        }
-        if pvalues is not None:
-            task["pvalues"] = [pvalues[task_id]]
-        tasks.append(task)
-    return {"samples": samples, "tasks": tasks, "frames": frames, "signal": signal,
-            "aggregation": aggregation, "or_func": or_func}
+    def on_permutations(total):
+        run.unit, run.done, run.total = "permutations", 0, total
+
+    return results.score_run(ctx.model, routes, complex_cache, descriptions, cfg["method"], cfg["params"], data,
+                             progress=progress, on_permutations=on_permutations)
 
 
 _LFC_NAME = re.compile(r"(?i)^(log_?2?_?fold_?change|log_?2?_?fc|l2fc|lfc|logfc|fold_?change)$|log2?fc|lfc|fold")
@@ -510,21 +445,14 @@ async def api_run_results(run_id: str):
     return {**run.info(), "samples": run.result["samples"], "tasks": run.result["tasks"]}
 
 
-RESULTS_FORMAT = "mteapy-results"
-RESULTS_FORMAT_VERSION = 1
-
-
-def _signal_kind(method_id: str) -> str:
-    return {"CellFie": "gene_activity_levels", "TIDE": "log_fold_change"}.get(method_id, "expression")
+RESULTS_FORMAT = results.RESULTS_FORMAT
+RESULTS_FORMAT_VERSION = results.RESULTS_FORMAT_VERSION
 
 
 def _relevant_genes(ctx: ModelContext, task_list: str, signal: pd.DataFrame) -> list[str]:
-    """Genes of `signal` that any route of `task_list` can reach through a GPR --
-    all the scoring (and the network view) ever looks at, a few thousand of ~20k."""
+    """Genes of `signal` that any route of `task_list` can reach through a GPR."""
     routes, _, _ = _task_list_structures(ctx, task_list)
-    reactions = {r for task_routes in routes.values() for rs in task_routes.values() for r in rs}
-    genes = {g.id for rid in reactions for g in ctx.model.reactions.get_by_id(rid).genes}
-    return [g for g in signal.index if g in genes]
+    return results.relevant_genes(ctx.model, routes, signal)
 
 
 @app.get("/api/runs/{run_id}/export")
@@ -556,28 +484,14 @@ async def api_export_run(run_id: str, format: str = "json"):
         raise HTTPException(400, "format must be 'json' or 'tsv'")
 
     ctx = get_context(cfg["model"])
-    signal = result["signal"]
-    genes = _relevant_genes(ctx, cfg["task_list"], signal)
-    sub = signal.loc[genes, result["samples"]]
-    try:
-        version = importlib.metadata.version("mteapy")
-    except importlib.metadata.PackageNotFoundError:
-        version = None
-    bundle = {
-        "format": RESULTS_FORMAT, "format_version": RESULTS_FORMAT_VERSION,
-        "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "mteapy_version": version,
-        "model": {"key": ctx.entry.key, "name": ctx.entry.name, "version": ctx.entry.version,
-                  "sha256": ctx.entry.sha256},
-        "task_list": {"name": cfg["task_list"],
-                      "routes_fingerprint": taskdb.task_list_routes_fingerprint(ctx.db, cfg["task_list"])},
-        "method": {"id": cfg["method"], "params": cfg["params"]},
-        "warnings": run.warnings,
-        "samples": result["samples"],
-        "tasks": result["tasks"],
-        "signal": {"kind": _signal_kind(cfg["method"]), "genes": genes, "samples": result["samples"],
-                   "values": [[None if x != x else float(f"{x:.6g}") for x in row] for row in sub.to_numpy()]},
-    }
-    return Response(json.dumps(bundle, allow_nan=False), media_type="application/json",
+    routes, _, _ = _task_list_structures(ctx, cfg["task_list"])
+    bundle = results.build_bundle(
+        model=ctx.model,
+        model_info={"key": ctx.entry.key, "name": ctx.entry.name, "version": ctx.entry.version,
+                    "sha256": ctx.entry.sha256},
+        task_list=cfg["task_list"], routes_fingerprint=taskdb.task_list_routes_fingerprint(ctx.db, cfg["task_list"]),
+        routes=routes, method_id=cfg["method"], params=cfg["params"], result=result, warnings=run.warnings)
+    return Response(results.dumps_bundle(bundle), media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{stem}.json"'})
 
 
@@ -629,7 +543,7 @@ async def api_import_run(bundle: dict = Body(...)):
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(400, f"Malformed results file: {exc.args[0] if exc.args else exc!r}") from None
 
-    aggregation, or_func = _scoring_conventions(method.id, params)
+    aggregation, or_func = results.scoring_conventions(method.id, params)
     warnings = [w for w in bundle.get("warnings", []) if isinstance(w, str)]
     dataset_id = None
     if sig.get("kind") == "expression":
