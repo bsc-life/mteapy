@@ -1,57 +1,40 @@
 # Current state
 
-Last updated: 2026-10-07, end of the session that moved everything to the
-schema-v2 task/route database, added the model-folder/manifest registry, and
-started the GUI's analysis panel.
+Last updated: 2026-11-11, end of the session that added `mteapy.results`, the CLI `--bundle` option and the
+Compute/Results tabs in the webapp.
 
 ## Branch status -- read this first
 
-Active development is on **`feature/context-aware-scoring`**, pushed to
-`origin/feature/context-aware-scoring` as of the previous session's last commit
-(`745b0d6`) -- **everything described under "This session" below is
-UNCOMMITTED in the working tree** (the user commits; don't commit unasked).
-`main` is still at `5e3c003` and has none of the feature branch's work; no
-decision has been made about merging (the user floated merging to a
-`development` branch first, then branching the refactor off it). Don't merge
-unilaterally; ask first.
+Active development is on **`feature/context-aware-scoring`**; everything is committed and pushed
+(`origin/feature/context-aware-scoring` at `8153a3c`, tree clean). `main` is still at `5e3c003` and has none of this
+work; no decision has been made about merging (the user floated merging to a `development` branch first). Don't merge
+unilaterally; ask first. Don't commit unasked.
+
+## Recently done
+
+- Schema-v2 task/route DB, model-folder registry, method specs shared by CLI and GUI (see `architecture.md`).
+- Scoring semantics: no-GPR reactions are left out of aggregates, `missing_genes` (`exclude` default | `zero`) for every
+  method (see `decisions.md`). Outputs made before this (e.g. in `metabolic-variability`) must be regenerated.
+- `mteapy.results` + `run-mtea analyze TAS|CellFie|TIDE ... --mapping-strategy context-aware --bundle FILE[.gz]`; the
+  webapp has Compute and Results tabs and loads those files (`.gz` decompressed in the browser). TIDE-essential is
+  legacy (CLI only). 4 CLI-bundle tests added in `tests/test_webapp.py`.
+- Size measurement of bundles (TAS, Human-GEM, `HumanGEM-Full`, GTEx v10 single samples): the routes reach only 1,246
+  genes; gzip JSON is ~4.7 KB/sample (100 samples = 0.47 MB, extrapolated ~5 MB for 1,000 and ~80 MB for 17,000);
+  scoring takes ~0.36 s/sample, so compute time, not file size, is the limit. A float32 binary saves only ~10%.
+  Parquet/HDF5 not worth it for now; if tens of thousands of samples ever matter, serve the signal per sample from
+  the server instead of changing format.
+
+## Open ideas (nothing decided)
+
+- CLI export of task graphs like the web's SVG (options: Graphviz, Node+dagre, headless browser).
+- Vendor d3/dagre into `webapp/static` so the page works offline (today they load from cdnjs/jsdelivr; a blocked CDN
+  makes tasks/networks silently not show).
+- A bundle option that omits the signal (scores only, ~0.5 KB/sample; the web then could not draw networks).
+- Side-by-side comparison of two datasets/samples in the webapp.
 
 ## Test suite
 
-182 tests passing (`pytest` from repo root with the dev venv active).
-
-## This session (uncommitted)
-
-- **Schema v2** (`mteapy.taskdb`): self-contained per-model DB -- model
-  entities by integer key, named task lists with full task definitions,
-  routes + fluxes (`flux NOT NULL`). Legacy `routes.py` removed; legacy DBs
-  convert with `cmds/migrate_db.py` (verified: all 17,616 routes/fluxes
-  identical, TAS scores identical through the CLI). See `architecture.md`.
-- **CLI**: `tasks import`, `tasks enumerate-routes --task-list`, `models list`,
-  `--model` / `--task-list` on `analyze`; `cmds/import_routes.py` loads MN5
-  greasy JSON (supports only) and solves fluxes on route-restricted
-  submodels (`network.compute_route_fluxes_submodel`, ~1000x faster).
-- **Model folder + manifest registry** (`mteapy.registry`): the bundled model
-  is `src/mteapy/data/models/HumanGEM/` (manifest, model, `routes.db`, task
-  files, annotations); packaged via `pyproject.toml` package-data (verified by
-  building a wheel). `.gitattributes` LFS pattern changed to
-  `src/mteapy/data/models/*/*.db`.
-- **24 "Full" task bounds corrected** (31, 32, 77-97, 99) in the Human-GEM
-  checkout's `metabolicTasks_Full.txt` (uncommitted there too, on branch
-  `fix/task-90-148-curation`); task 246 flagged `INVALID:` -- see `decisions.md`.
-- **Webapp**: model + task-list selectors (per-model contexts), hideable
-  panels, an Analysis bar (method + generated parameter form + Run with
-  progress/cancel, scoring all samples in a worker). TAS only; see
-  `architecture.md`/`webapp/README.md`.
-- `mteapy.methods`: one declarative spec per method shared by CLI and GUI.
-
-## Scoring semantics changed (uncommitted until noted otherwise)
-
-No method counts a no-GPR reaction as 0 any more, and `missing_genes`
-("exclude" default | "zero") sets how genes absent from the data are read --
-see the last two entries of `decisions.md`. Scores of TAS, context-aware
-CellFie/TIDE and classic TIDE changed; outputs made before (e.g. in
-`metabolic-variability`) must be regenerated, and results files saved earlier
-no longer load (the routes fingerprint changed with the rehash).
+233 passing (`venv/bin/python -m pytest`).
 
 ## Pending -- do these next
 
